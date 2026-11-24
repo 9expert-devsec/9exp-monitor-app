@@ -1,0 +1,46 @@
+name: prune
+
+# Drops health_checks rows older than 30 days. Daily at 18:20 UTC — 01:20
+# Bangkok time, comfortably inside the quiet window and away from the top of the
+# hour where GitHub's scheduler is most congested.
+on:
+  schedule:
+    - cron: '20 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prune-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger prune
+        env:
+          MONITOR_URL: ${{ secrets.MONITOR_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          response=$(mktemp)
+          status=$(curl \
+            --silent \
+            --show-error \
+            --location \
+            --max-time 120 \
+            --output "$response" \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "x-cron-secret: ${CRON_SECRET}" \
+            --header 'content-type: application/json' \
+            "${MONITOR_URL}/api/checks/prune")
+
+          echo "HTTP ${status}"
+          cat "$response"
+          echo
+
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Prune returned HTTP ${status}"
+            exit 1
+          fi
