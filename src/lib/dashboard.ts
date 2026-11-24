@@ -82,7 +82,8 @@ export async function getDashboardData(): Promise<DashboardData> {
         .from('monitored_sites')
         .select('*')
         .eq('enabled', true)
-        .order('sort_order', { ascending: true })
+        .order('group_name', { ascending: true })
+        .order('name', { ascending: true })
         .returns<Site[]>(),
       supabase
         .from('latest_health_checks')

@@ -7,7 +7,7 @@ import { requirePageSession } from '@/lib/session'
 export const dynamic = 'force-dynamic'
 
 export default async function DashboardPage() {
-  await requirePageSession()
+  const session = await requirePageSession()
   const { snapshots, lastRunAt, renderedAt } = await getDashboardData()
   const realtime = publicRealtimeConfig()
 
@@ -18,6 +18,7 @@ export default async function DashboardPage() {
         lastRunAt={lastRunAt}
         realtime={realtime}
         serverNow={renderedAt}
+        canAddSites={session.profile.role === 'admin'}
       />
       <footer className="text-center text-xs text-(--text-muted)">
         9Expert Internal Status Monitor · {realtime ? 'live updates' : 'refreshes on reload'}

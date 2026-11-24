@@ -1,11 +1,15 @@
-import type { CheckStatus, HealthDependency, HealthPayload } from '@/lib/types'
+import type { CheckStatus, HealthDependency, HealthPayload } from './types'
 
 /**
- * The classification rules, separated from the network I/O in `checker.ts` so
+ * The classification rules, separated from the network I/O in `probe.ts` so
  * the decision table can be reasoned about — and exercised — on its own.
+ * Pure functions only: no fetch, no clock, no database. (Relative import
+ * above so `scripts/probe.ts` can load this outside Next.js.)
  *
- * Network failures and timeouts are handled by the caller; by the time we get
- * here a response was received.
+ * Two layers:
+ *  - `classifyResponse()` — the `/api/health` JSON contract, unchanged.
+ *  - `combineCheck()`     — page-first: the page decides up/down, then speed
+ *                           and the optional health check decide degraded.
  */
 
 /** Health payloads are small by contract; anything larger is not stored. */
@@ -23,7 +27,11 @@ export interface ClassifyInput {
   statusText?: string
   body: string
   responseMs: number
-  expectedMs: number
+  /**
+   * Optional. Since page-first checks, "too slow" is judged on the page's
+   * response time in `combineCheck()`; the health call is not timed against it.
+   */
+  expectedMs?: number
 }
 
 function dependenciesOf(payload: HealthPayload): HealthDependency[] {
@@ -39,7 +47,7 @@ export function classifyResponse({
   statusText = '',
   body,
   responseMs,
-  expectedMs,
+  expectedMs = Number.POSITIVE_INFINITY,
 }: ClassifyInput): Classification {
   const httpLabel = `HTTP ${httpStatus} ${statusText}`.trim()
 
@@ -102,4 +110,103 @@ export function classifyResponse({
     payload,
     error: reasons.length > 0 ? truncate(reasons.join('; ')) : null,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Page-first combination
+// ---------------------------------------------------------------------------
+
+/** What the `GET {url}` produced. */
+export interface PageResult {
+  /** Final status after redirects, or null when no response arrived. */
+  httpStatus: number | null
+  /** Reason phrase for `httpStatus` ('' when unknown). */
+  statusText: string
+  /** Time to the final response's headers, or null when none arrived. */
+  responseMs: number | null
+  /** Network-level failure ("DNS lookup failed", "Timeout after 10 s"), if any. */
+  networkError: string | null
+}
+
+/** What the optional health check produced. */
+export interface HealthResult extends Classification {
+  httpStatus: number | null
+  responseMs: number | null
+}
+
+/** Which explanation the UI should show. The text lives in `messages.ts`. */
+export type CheckMessage =
+  | { key: 'page_down'; reason: string }
+  | { key: 'slow_page'; expectedMs: number; responseMs: number }
+  | { key: 'health_problem'; reason: string }
+
+export interface CombinedResult {
+  status: CheckStatus
+  /** English text stored in `health_checks.error`; null when up. */
+  error: string | null
+  message: CheckMessage | null
+}
+
+export function pageIsOk(page: PageResult): boolean {
+  return page.httpStatus !== null && page.httpStatus >= 200 && page.httpStatus < 300
+}
+
+/** "HTTP 503 · Service Unavailable", or "HTTP 599" without a known phrase. */
+export function describeHttpFailure(httpStatus: number, statusText: string): string {
+  const phrase = statusText.trim()
+  return phrase ? `HTTP ${httpStatus} · ${phrase}` : `HTTP ${httpStatus}`
+}
+
+/** One-line reason a health check is not OK, for the "health problem" message. */
+export function healthReasonOf(health: HealthResult): string {
+  return health.error ?? `health check returned "${health.status}"`
+}
+
+/**
+ * The decision table (section 1.3 of the round-3 spec):
+ *
+ * | page                     | health                  | result                     |
+ * | ------------------------ | ----------------------- | -------------------------- |
+ * | not 2xx / no response    | (not consulted)         | down      · page_down      |
+ * | 2xx, slower than expected| any                     | degraded  · slow_page      |
+ * | 2xx                      | failing / bad dependency| degraded  · health_problem |
+ * | 2xx                      | ok, or no health URL    | up                         |
+ *
+ * When the page is both slow and the health check fails, the slow page wins the
+ * message and the stored error carries both reasons.
+ */
+export function combineCheck(
+  page: PageResult,
+  health: HealthResult | null,
+  expectedMs: number,
+): CombinedResult {
+  if (!pageIsOk(page)) {
+    const reason =
+      page.networkError ??
+      (page.httpStatus !== null
+        ? describeHttpFailure(page.httpStatus, page.statusText)
+        : 'No response')
+    return { status: 'down', error: truncate(reason), message: { key: 'page_down', reason } }
+  }
+
+  const healthProblem = health !== null && health.status !== 'up' ? healthReasonOf(health) : null
+
+  if (page.responseMs !== null && page.responseMs > expectedMs) {
+    const slow = `Page responded in ${page.responseMs} ms (expected < ${expectedMs} ms)`
+    return {
+      status: 'degraded',
+      error: truncate(healthProblem ? `${slow}; health: ${healthProblem}` : slow),
+      message: { key: 'slow_page', expectedMs, responseMs: page.responseMs },
+    }
+  }
+
+  if (healthProblem) {
+    return {
+      status: 'degraded',
+      error: truncate(healthProblem),
+      message: { key: 'health_problem', reason: healthProblem },
+    }
+  }
+
+  return { status: 'up', error: null, message: null }
 }

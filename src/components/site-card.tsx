@@ -17,7 +17,8 @@ import {
 import {
   SITE_NEVER_CHECKED_MESSAGE,
   STALE_MESSAGE,
-  slowerThanThresholdMessage,
+  healthProblemMessage,
+  slowPageMessage,
 } from '@/lib/messages'
 import { STATUS_COLOR, STATUS_SOFT, displayStatusOf } from '@/lib/status'
 import type { DisplayStatus, SiteSnapshot } from '@/lib/types'
@@ -25,9 +26,10 @@ import type { DisplayStatus, SiteSnapshot } from '@/lib/types'
 /**
  * The one-line explanation under a card that is not operational.
  *
- * Degraded has several causes (slow, failing dependency, bad payload, non-2xx).
- * The Thai "slower than threshold" sentence is only true for the first, so the
- * other causes show the checker's own error text instead of a wrong reason.
+ * Degraded has two causes since page-first checks: the page was slower than
+ * the threshold (`response_ms` is the page's), or the page was fine and the
+ * optional health check reported a problem — `error` then holds that reason.
+ * Down shows the raw English error (HTTP status line or network reason).
  */
 interface CardMessage {
   text: string
@@ -46,8 +48,10 @@ function messageFor(snapshot: SiteSnapshot, status: DisplayStatus): CardMessage 
   }
   if (status === 'degraded') {
     const slow = latest?.response_ms != null && latest.response_ms > site.expected_ms
-    if (slow) return { text: slowerThanThresholdMessage(site.expected_ms), kind: 'explain' }
-    return latest?.error ? { text: formatCheckError(latest.error), kind: 'raw' } : null
+    if (slow) return { text: slowPageMessage(site.expected_ms), kind: 'explain' }
+    return latest?.error
+      ? { text: healthProblemMessage(formatCheckError(latest.error)), kind: 'explain' }
+      : null
   }
   return null
 }

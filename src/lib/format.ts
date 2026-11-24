@@ -77,7 +77,8 @@ export function formatMonthDay(day: string): string {
 
 /** "HTTP 503 Service Unavailable" → "HTTP 503 · Service Unavailable". */
 export function formatCheckError(error: string): string {
-  return error.replace(/^HTTP (\d{3}) (?=\S)/, 'HTTP $1 · ')
+  // Idempotent: errors recorded since page-first checks already carry the "·".
+  return error.replace(/^HTTP (\d{3}) (?=[^\s·])/, 'HTTP $1 · ')
 }
 
 /** "www.9expert.co.th" from a full URL; the raw string if it does not parse. */

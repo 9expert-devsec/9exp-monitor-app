@@ -16,11 +16,14 @@ interface NavItem {
  */
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Overview', href: '/' },
+  { label: 'Sites', href: '/sites' },
   { label: 'Users', href: '/users', adminOnly: true },
 ]
 
 function isActive(pathname: string, href: string): boolean {
+  // A site's detail page is reached from the overview, so it lights up Overview.
   if (href === '/') return pathname === '/' || pathname.startsWith('/sites/')
+  if (href === '/sites') return pathname === '/sites'
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 

@@ -1,35 +1,18 @@
 import 'server-only'
 
-import { classifyResponse } from '@/lib/classify'
 import { getNotifier, notifySafely } from '@/lib/notifier'
+import { checkSite, type SiteCheck } from '@/lib/probe'
 import { serviceClient } from '@/lib/supabase/server'
-import type {
-  CheckStatus,
-  HealthPayload,
-  Incident,
-  RunSummary,
-  Site,
-} from '@/lib/types'
+import type { CheckStatus, Incident, RunSummary, Site } from '@/lib/types'
 
-/** Per-attempt network timeout. */
-const ATTEMPT_TIMEOUT_MS = 10_000
-/** Cool-down before the single retry that guards against cold starts. */
-const RETRY_DELAY_MS = 2_000
 /**
- * Hard ceiling for the whole run. Worst case for one site is
- * 10s + 2s + 10s = 22s, and every site runs in parallel, so this only bites if
- * the platform itself is struggling. It exists so the route always gets to
- * write its results and return rather than being killed mid-flight by Vercel.
+ * Hard ceiling for the whole run. Worst case for one site is a page check with
+ * its retry (10s + 2s + 10s) plus one health call (10s) = 32s, and every site
+ * runs in parallel, so this only bites if the platform itself is struggling.
+ * It exists so the route always gets to write its results and return rather
+ * than being killed mid-flight by Vercel.
  */
 const RUN_DEADLINE_MS = 45_000
-
-interface Probe {
-  status: CheckStatus
-  httpStatus: number | null
-  responseMs: number | null
-  payload: HealthPayload | null
-  error: string | null
-}
 
 /** Shape returned by the `record_health_check` Postgres function. */
 interface RecordOutcome {
@@ -42,144 +25,21 @@ interface RecordOutcome {
   incident_http_status: number | null
 }
 
-function truncate(value: string, max = 1000): string {
-  return value.length <= max ? value : `${value.slice(0, max - 1)}…`
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof DOMException && error.name === 'TimeoutError') {
-    return `Timed out after ${ATTEMPT_TIMEOUT_MS}ms`
-  }
-  if (error instanceof DOMException && error.name === 'AbortError') {
-    return 'Request aborted (run deadline reached)'
-  }
-  if (error instanceof Error) {
-    const cause = error.cause instanceof Error ? `: ${error.cause.message}` : ''
-    return truncate(`${error.message}${cause}`)
-  }
-  return truncate(String(error))
-}
-
-/**
- * One attempt against one site. Never throws — a thrown network error is a
- * result, not an exception, as far as the run is concerned.
- */
-async function probeOnce(site: Site, runSignal: AbortSignal): Promise<Probe> {
-  const startedAt = performance.now()
-
-  let response: Response
-  try {
-    response = await fetch(site.health_url, {
-      cache: 'no-store',
-      redirect: 'follow',
-      headers: { accept: 'application/json', 'user-agent': '9exp-monitor/1.0' },
-      signal: AbortSignal.any([
-        AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
-        runSignal,
-      ]),
-    })
-  } catch (error) {
-    return {
-      status: 'down',
-      httpStatus: null,
-      responseMs: Math.round(performance.now() - startedAt),
-      payload: null,
-      error: describeError(error),
-    }
-  }
-
-  const responseMs = Math.round(performance.now() - startedAt)
-  const httpStatus = response.status
-
-  // A 5xx is decided by the status line alone, so there is no reason to pull
-  // an error page's body across the wire.
-  if (httpStatus >= 500) {
-    return {
-      status: 'down',
-      httpStatus,
-      responseMs,
-      payload: null,
-      error: `HTTP ${httpStatus} ${response.statusText}`.trim(),
-    }
-  }
-
-  // Read the body defensively: a hung stream on an otherwise-successful
-  // response should not escape as an unhandled rejection.
-  let body: string
-  try {
-    body = await response.text()
-  } catch (error) {
-    return {
-      status: 'degraded',
-      httpStatus,
-      responseMs,
-      payload: null,
-      error: `Could not read response body: ${describeError(error)}`,
-    }
-  }
-
-  const verdict = classifyResponse({
-    httpStatus,
-    statusText: response.statusText,
-    body,
-    responseMs,
-    expectedMs: site.expected_ms,
-  })
-
-  return { ...verdict, httpStatus, responseMs }
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve()
-      return
-    }
-    const timer = setTimeout(finish, ms)
-    signal.addEventListener('abort', finish, { once: true })
-
-    function finish() {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', finish)
-      resolve()
-    }
-  })
-}
-
-/**
- * Probe a site, retrying once before committing to `down`.
- *
- * Cold starts and transient network blips are the single biggest source of
- * false alarms in a 5-minute monitor, so `down` has to survive two attempts
- * two seconds apart. `degraded` is not retried — a slow or unhealthy response
- * is real information and re-measuring it would only hide it.
- */
-async function probeSite(site: Site, runSignal: AbortSignal): Promise<Probe> {
-  const first = await probeOnce(site, runSignal)
-  if (first.status !== 'down' || runSignal.aborted) return first
-
-  await sleep(RETRY_DELAY_MS, runSignal)
-  if (runSignal.aborted) return first
-
-  const second = await probeOnce(site, runSignal)
-  if (second.status === 'down') {
-    return { ...second, error: second.error ?? first.error }
-  }
-  return second
-}
-
-async function recordAndNotify(site: Site, probe: Probe): Promise<void> {
+async function recordAndNotify(site: Site, check: SiteCheck): Promise<void> {
   const supabase = serviceClient()
 
   // `record_health_check` returns a composite type, so PostgREST hands back a
   // single object rather than an array.
+  // `http_status` / `response_ms` are the PAGE's; the health call has its own columns.
   const { data, error } = await supabase.rpc('record_health_check', {
     p_site_id: site.id,
-    p_status: probe.status,
-    p_http_status: probe.httpStatus,
-    p_response_ms: probe.responseMs,
-    p_payload: probe.payload,
-    p_error: probe.error,
+    p_status: check.status,
+    p_http_status: check.page.httpStatus,
+    p_response_ms: check.page.responseMs,
+    p_payload: check.payload,
+    p_error: check.error,
+    p_health_http_status: check.health?.httpStatus ?? null,
+    p_health_ms: check.health?.responseMs ?? null,
   })
 
   if (error) {
@@ -226,7 +86,6 @@ export async function runChecks(): Promise<RunSummary> {
     .from('monitored_sites')
     .select('*')
     .eq('enabled', true)
-    .order('sort_order', { ascending: true })
     .returns<Site[]>()
 
   if (error) {
@@ -244,9 +103,9 @@ export async function runChecks(): Promise<RunSummary> {
   try {
     const results = await Promise.allSettled(
       (sites ?? []).map(async (site) => {
-        const probe = await probeSite(site, deadline.signal)
-        await recordAndNotify(site, probe)
-        return probe.status
+        const check = await checkSite(site, deadline.signal)
+        await recordAndNotify(site, check)
+        return check.status
       }),
     )
 

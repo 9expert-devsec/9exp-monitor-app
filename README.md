@@ -1,7 +1,8 @@
 # 9Expert Internal Status Monitor
 
-Watches every 9Expert project's `/api/health` endpoint and shows them on one
-real-time dashboard.
+Checks every 9Expert site every 5 minutes — the page itself always, plus an
+optional `/api/health` endpoint for in-house projects — and shows them on one
+real-time dashboard. Sites are managed by admins on the **Sites** page.
 
 - **Framework:** Next.js 16 (App Router, TypeScript, Turbopack)
 - **Data store:** Supabase (Postgres + Realtime)
@@ -50,14 +51,12 @@ npm install
 supabase db push
 #   or: supabase/migrations/20260804090000_init_monitor.sql
 #       supabase/migrations/20261124120000_auth_profiles.sql
+#       supabase/migrations/20261124150000_sites_managed.sql
 
-# 2. Seed the site registry from config/sites.ts
-npm run seed
-
-# 3. Create the first admin (prints a temporary password once)
+# 2. Create the first admin (prints a temporary password once)
 npm run create-admin -- --email you@example.com --name "Your Name"
 
-# 4. Run
+# 3. Run, sign in, and add sites on the Sites page
 npm run dev
 ```
 
@@ -95,29 +94,30 @@ Supabase dashboard as well; the app never calls `signUp`.
 
 ## Adding a new site
 
-1. Add one entry to [`config/sites.ts`](config/sites.ts):
+Sign in as an admin, open **Sites** (`/sites`) and press **+ Add site**:
 
-   ```ts
-   {
-     slug: 'new-project',
-     name: '9Expert New Project',
-     url: 'https://new.9expert.co.th',
-     healthUrl: 'https://new.9expert.co.th/api/health',
-     group: 'Production',
-     expectedMs: 1500,
-   }
-   ```
+- **Page URL** (required, `https://` only) — the page every check fetches.
+- **Health check URL** (optional) — in-house projects that implement
+  [the `/api/health` contract](#the-apihealth-contract). Leave it empty for
+  outsourced or third-party systems: they get a page check only.
+- **Group** — `In-house` or `Outsourced`; **Degraded above (ms)** defaults to
+  800 / 1500 for a new site.
+- **Test connection** runs the exact same check once without recording it.
 
-2. `npm run seed`
+The database is the only source of truth; there is no config file or seed
+script. The slug (the `/sites/<slug>` URL) is generated from the name on create
+and never changes on rename.
 
-That is the whole process. The seed script upserts on `slug`, so it is safe to
-run repeatedly, and the array order becomes the display order.
+**Pausing** a site (the toggle, or *Monitoring enabled* in the drawer) stops
+checks but keeps its history. **Deleting** a site removes its whole history
+permanently.
 
-**Removing a site:** delete its entry and re-seed. The row is *disabled*, not
-deleted — deleting would cascade away its entire check history. Drop it manually
-in Supabase if you really want the history gone.
+To try a URL from the terminal without touching the database:
 
-Never edit `monitored_sites` by hand; the next seed will overwrite it.
+```bash
+npm run probe -- https://www.example.com                                   # page only
+npm run probe -- https://www.example.com https://www.example.com/api/health 800
+```
 
 ---
 
@@ -156,8 +156,8 @@ See [Design decisions](#design-decisions).
 
 ## The `/api/health` contract
 
-Every monitored project must expose `GET /api/health` returning **HTTP 200** with
-a JSON object:
+Optional, for in-house projects. A site with a health URL must return
+**HTTP 200** with a JSON object from it:
 
 ```jsonc
 {
@@ -186,31 +186,33 @@ a JSON object:
 
 Requirements:
 
-- Respond in under the site's `expectedMs` (default 1500ms). Slower responses
-  are classified `degraded`.
 - Always return HTTP 200 when the app itself is serving, even if a dependency is
-  broken — signal that through `status` and `checks[]`. Returning 5xx opens an
-  incident.
+  broken — signal that through `status` and `checks[]`. Check DB connectivity.
 - The endpoint must be publicly reachable and unauthenticated. A 401/403 is
   recorded as `degraded`.
 - Keep the payload under 64KB.
 
-### How responses are classified
+### How a site is classified (page-first)
 
-| Result                                                    | Status     |
-| --------------------------------------------------------- | ---------- |
-| Network error, DNS failure, or timeout (10s)               | `down`     |
-| HTTP ≥ 500                                                 | `down`     |
-| HTTP 2xx, `status === "ok"`, all checks ok, fast enough    | `up`       |
-| HTTP 2xx but `status !== "ok"`                             | `degraded` |
-| HTTP 2xx but any `checks[].status !== "ok"`                | `degraded` |
-| HTTP 2xx but slower than `expected_ms`                     | `degraded` |
-| Non-JSON or malformed body                                 | `degraded` |
-| Any other non-2xx (3xx, 4xx)                               | `degraded` |
+Every run fetches the **page** (`GET url`, redirects followed, 10 s timeout,
+`User-Agent: 9ExpertMonitor/1.0 (+internal uptime check)`). If the site has a
+health URL and the page answered, the health endpoint is checked next.
 
-Before recording `down`, the checker **retries once after 2 seconds**. Only if
-that also fails is `down` recorded — this is what keeps cold starts from paging
-anyone. `degraded` is never retried.
+| Page                                   | Health check                         | Status     |
+| -------------------------------------- | ------------------------------------ | ---------- |
+| Not 2xx, network/DNS error, or timeout | (not run)                            | `down`     |
+| 2xx, slower than `expected_ms`         | any                                  | `degraded` |
+| 2xx                                    | failing, non-2xx, malformed, or a `checks[]` entry not `"ok"` | `degraded` |
+| 2xx                                    | OK, or no health URL                 | `up`       |
+
+Only the page can make a site `down` and open an incident. `response_ms` and
+`http_status` are the page's; the health call's own status and time are stored
+in `health_http_status` / `health_ms`, and its JSON in `payload` (the chips).
+
+Before recording a failed page, the checker **retries once after 2 seconds**.
+Only if that also fails is `down` recorded — this is what keeps cold starts
+from paging anyone. `degraded` is never retried. The decision table is the pure
+function `combineCheck()` in `src/lib/classify.ts`.
 
 ---
 
@@ -260,9 +262,9 @@ swallowed — a broken webhook must never fail a run or lose a recorded check.
 | ------------------- | ------------------------------------------------- |
 | `npm run dev`       | Dev server                                        |
 | `npm run build`     | Production build                                  |
-| `npm run seed`      | Sync `monitored_sites` from `config/sites.ts`     |
 | `npm run check:local` | Fire the checker against a running server       |
 | `npm run create-admin` | Create the first admin (see Accounts)          |
+| `npm run probe`     | Check one URL with the real check; no DB          |
 | `npm run lint`      | ESLint                                            |
 | `npm run typecheck` | `tsc --noEmit`                                    |
 
@@ -327,10 +329,11 @@ Places where this deviates from, or resolves ambiguity in, the original spec:
    `runChecks()` as `POST /api/checks/run`. A 15-second per-instance cooldown stops a
    held-down button from hammering the monitored sites.
 
-5. **Non-2xx below 500 is `degraded`, not `up`.** Read literally, "up —
-   everything else" would classify a 404 on `/api/health` as healthy. A missing
-   or auth-walled endpoint is recorded as `degraded` with the status line in
-   `error`.
+5. **Page-first: the page decides `down`, the health check only degrades.**
+   Outsourced (PHP) systems cannot add `/api/health`, so a health endpoint is
+   optional and every site gets a page check. A page that is not 2xx is `down`;
+   a missing, auth-walled or failing health endpoint on a working page is
+   `degraded` with the reason in `error`, never `down`.
 
 6. **Rollup days are Bangkok-local, not UTC.** A "day" on the history bar should
    match the day the team actually worked.

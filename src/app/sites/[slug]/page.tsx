@@ -1,4 +1,4 @@
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
@@ -40,7 +40,8 @@ export default async function SiteDetailPage({
   params: Promise<{ slug: string }>
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
-  await requirePageSession()
+  const session = await requirePageSession()
+  const isAdmin = session.profile.role === 'admin'
   const { slug } = await params
   const range = parseRange((await searchParams).range)
 
@@ -95,10 +96,15 @@ export default async function SiteDetailPage({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <StatusPill status={status} />
+              {!site.enabled && (
+                <span className="rounded-pill border border-(--border-subtle) px-2.5 py-1 text-xs leading-none font-semibold text-(--text-muted)">
+                  Paused
+                </span>
+              )}
               <span className="text-sm text-(--text-secondary)">{statusLine}</span>
             </div>
             <p className="font-mono text-xs break-all text-(--text-muted)">
-              health: {site.health_url}
+              {site.health_url ? `health: ${site.health_url}` : 'page check only'}
               <span className="px-3" aria-hidden="true">
                 ·
               </span>
@@ -107,6 +113,15 @@ export default async function SiteDetailPage({
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:flex sm:items-start">
+            {isAdmin && (
+              <Link
+                href={`/sites?edit=${encodeURIComponent(site.slug)}`}
+                className={buttonClassName('ghost', 'col-span-2 sm:col-span-1')}
+              >
+                <Settings size={16} aria-hidden="true" />
+                Edit settings
+              </Link>
+            )}
             <a
               href={site.url}
               target="_blank"

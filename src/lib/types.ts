@@ -7,13 +7,19 @@ export interface Site {
   id: string
   slug: string
   name: string
+  /** The page that is always checked (https only). */
   url: string
-  health_url: string
+  /** Optional JSON health endpoint (in-house projects). Null = page check only. */
+  health_url: string | null
   group_name: string | null
   expected_ms: number
   enabled: boolean
+  /** Whether a down incident sends alerts (used from round 4). */
+  alert_enabled: boolean
   sort_order: number
   created_at: string
+  updated_at: string
+  created_by: string | null
 }
 
 /** One dependency reported by a monitored project's /api/health. */
@@ -42,6 +48,9 @@ export interface HealthCheck {
   response_ms: number | null
   payload: HealthPayload | null
   error: string | null
+  /** The health endpoint's own status / timing, when one ran. `http_status` and `response_ms` are the page's. */
+  health_http_status?: number | null
+  health_ms?: number | null
 }
 
 /** A row of `daily_rollups`. */

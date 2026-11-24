@@ -1,8 +1,10 @@
 'use client'
 
+import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 
+import { buttonClassName } from '@/components/button'
 import { DashboardToolbar, type FilterTab } from '@/components/dashboard-toolbar'
 import { KpiTile } from '@/components/kpi-tile'
 import { OverallStatusCard, type StatusCounts } from '@/components/overall-status-card'
@@ -27,6 +29,8 @@ interface Props {
    * hydration mismatch.
    */
   serverNow: string
+  /** Shows the "Add site" button in the empty state. */
+  canAddSites: boolean
 }
 
 /** How often the displayed clock advances. Not a data poll — no request is made. */
@@ -83,7 +87,7 @@ function compareEntries(a: Entry, b: Entry): number {
  * The filter tab and search query live in the URL (`?filter=issues&q=…`) and
  * are derived from it on every render — never mirrored into state.
  */
-export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow }: Props) {
+export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow, canAddSites }: Props) {
   const [liveChecks, setLiveChecks] = useState<Map<string, HealthCheck>>(() => new Map())
   const [liveIncidents, setLiveIncidents] = useState<Map<string, Incident>>(() => new Map())
   const [now, setNow] = useState(() => Date.parse(serverNow))
@@ -182,7 +186,7 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow }: P
   const counts: StatusCounts = { up: 0, degraded: 0, down: 0, stale: 0 }
   for (const entry of entries) counts[entry.status] += 1
 
-  // Group names in registry order, so the tabs and sections follow config/sites.ts.
+  // Group names in the order the server sent them (group, then name).
   const groupNames: string[] = []
   for (const entry of entries) {
     const group = groupOf(entry.snapshot)
@@ -255,10 +259,14 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow }: P
       </section>
 
       {entries.length === 0 ? (
-        <p className="rounded-lg border border-(--border-subtle) bg-(--surface-card) p-6 text-sm text-(--text-secondary)">
-          No sites are enabled yet. Add one to <code>config/sites.ts</code> and run{' '}
-          <code>npm run seed</code>.
-        </p>
+        <div className="flex flex-col items-start gap-4 rounded-lg border border-(--border-subtle) bg-(--surface-card) p-6 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-(--text-secondary)">No sites yet.</p>
+          {canAddSites && (
+            <Link href="/sites?new=1" className={buttonClassName('primary')}>
+              Add site
+            </Link>
+          )}
+        </div>
       ) : (
         <>
           <DashboardToolbar

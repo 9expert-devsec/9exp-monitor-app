@@ -9,8 +9,21 @@
  * URLs and codes only — Thai in a monospace fallback is hard to read.
  */
 
-export function slowerThanThresholdMessage(expectedMs: number): string {
-  return `ตอบช้ากว่าเกณฑ์ ${expectedMs} ms`
+// --- Check results (page-first) ---------------------------------------------
+
+/** Page answered 2xx but slower than the site's threshold. */
+export function slowPageMessage(expectedMs: number): string {
+  return `หน้าเว็บตอบช้ากว่าเกณฑ์ ${expectedMs} ms`
+}
+
+/** Page is fine; the optional health check reported a problem. `reason` is English. */
+export function healthProblemMessage(reason: string): string {
+  return `หน้าเว็บใช้งานได้ แต่ health check แจ้งปัญหา: ${reason}`
+}
+
+/** The page could not be reached (network error or non-2xx). `reason` is English. */
+export function cannotConnectMessage(reason: string): string {
+  return `เชื่อมต่อไม่ได้ — ${reason}`
 }
 
 export const STALE_MESSAGE = 'ไม่มีผลตรวจเกิน 15 นาที — ตัวตรวจอาจหยุดทำงาน'
@@ -46,3 +59,11 @@ export const ACCOUNT_DISABLED_MESSAGE = 'บัญชีนี้ถูกปิ
 export const PASSWORD_TOO_SHORT_MESSAGE = 'รหัสผ่านต้องยาวอย่างน้อย 12 ตัวอักษร'
 
 export const PASSWORDS_DO_NOT_MATCH_MESSAGE = 'รหัสผ่านทั้งสองช่องไม่ตรงกัน'
+
+// --- Sites page ---------------------------------------------------------------
+
+export const URL_MUST_BE_HTTPS_MESSAGE = 'URL ต้องขึ้นต้นด้วย https://'
+
+export const URL_ALREADY_USED_MESSAGE = 'มีเว็บที่ใช้ URL นี้อยู่แล้ว'
+
+export const DELETE_SITE_WARNING = 'ลบแล้วประวัติการตรวจทั้งหมดของเว็บนี้จะหายถาวร กู้คืนไม่ได้'
