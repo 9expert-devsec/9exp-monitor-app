@@ -308,7 +308,11 @@ export async function runWatchdog(now = new Date()): Promise<WatchdogResult> {
 
   const stalled = minutes === null || minutes >= settings.stalled_minutes
   if (!stalled) return { stalled, ...base, action: 'none' }
-  if (!settings.slack_enabled || !settings.rule_checker_stalled) return { stalled, ...base, action: 'disabled' }
+  // Not configured (off, rule off, or no webhook saved): answer 200 and post
+  // nothing, so a scheduled caller (pg_cron) does not log a failure every 5 min.
+  if (!settings.slack_enabled || !settings.rule_checker_stalled || !settings.slack_webhook_url) {
+    return { stalled, ...base, action: 'disabled' }
+  }
 
   // The stall's identity: the newest result it started after ("never" = epoch).
   const stamp = newest ?? new Date(0).toISOString()

@@ -53,6 +53,7 @@ supabase db push
 #       supabase/migrations/20261124120000_auth_profiles.sql
 #       supabase/migrations/20261124150000_sites_managed.sql
 #       supabase/migrations/20261124180000_notifications.sql
+#       supabase/migrations/20261124200000_watchdog_cron.sql
 
 # 2. Create the first admin (prints a temporary password once)
 npm run create-admin -- --email you@example.com --name "Your Name"
@@ -286,8 +287,17 @@ on; email is not built yet.
 per stall when the newest check result is older than the configured minutes.
 It must be called by a scheduler that does **not** depend on the `monitor`
 GitHub Actions workflow — if Actions stops, a step inside it cannot notice.
-**Not wired yet.** Options: Supabase `pg_cron` + `pg_net`, Vercel Cron, or an
-external uptime/cron service, every 5 minutes.
+It is scheduled in the database: migration `20261124200000_watchdog_cron.sql`
+adds a `pg_cron` job `monitor-watchdog` (every 5 minutes) that calls it with
+`pg_net`. The URL and the secret come from Supabase Vault, so nothing secret is
+in the repo; until both exist the job does nothing:
+
+```sql
+select vault.create_secret('<BASE_URL>', 'monitor_base_url');       -- e.g. https://monitor.9expert.app
+select vault.create_secret('<CRON_SECRET>', 'monitor_cron_secret'); -- same as CRON_SECRET
+```
+
+With Slack off (or no webhook saved) the route answers 200 and posts nothing.
 
 ---
 
