@@ -279,7 +279,7 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow }: P
           <div className="hidden flex-col gap-8 sm:flex">
             {sections.map((section) => (
               <section key={section.group} className="flex flex-col gap-3">
-                <h2 className="overline">
+                <h2 className="label-overline">
                   {section.group} ({section.entries.length})
                 </h2>
                 <div className="grid grid-cols-2 gap-6 xl:grid-cols-3">
@@ -295,7 +295,7 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow }: P
           <div className="flex flex-col gap-6 sm:hidden">
             {mobileIssues.length > 0 && (
               <section className="flex flex-col gap-3">
-                <h2 className="overline">Issues ({mobileIssues.length})</h2>
+                <h2 className="label-overline">Issues ({mobileIssues.length})</h2>
                 {mobileIssues.map((entry) => (
                   <SiteCard key={entry.snapshot.site.id} snapshot={entry.snapshot} now={now} />
                 ))}
@@ -303,7 +303,7 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow }: P
             )}
             {mobileOperational.length > 0 && (
               <section className="flex flex-col gap-3">
-                <h2 className="overline">Operational ({mobileOperational.length})</h2>
+                <h2 className="label-overline">Operational ({mobileOperational.length})</h2>
                 <div className="divide-y divide-(--border-subtle) overflow-hidden rounded-lg border border-(--border-subtle) bg-(--surface-card)">
                   {mobileOperational.map((entry) => (
                     <SiteRow key={entry.snapshot.site.id} snapshot={entry.snapshot} now={now} />

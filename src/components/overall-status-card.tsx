@@ -1,7 +1,7 @@
 import { CheckNowButton } from '@/components/check-now-button'
 import { StatusDot } from '@/components/status-dot'
 import { formatClock, formatRelative } from '@/lib/format'
-import { CHECKER_STALLED_MESSAGE } from '@/lib/messages'
+import { CHECKER_NEVER_RAN_MESSAGE, CHECKER_STALLED_MESSAGE } from '@/lib/messages'
 import { isStale } from '@/lib/status'
 import type { DisplayStatus } from '@/lib/types'
 
@@ -69,8 +69,11 @@ export function OverallStatusCard({
           <div>
             <h1 className="text-[28px] leading-tight font-bold">{headlineFor(counts, total)}</h1>
             <p className="mt-1 text-sm text-(--text-secondary)">
-              {plural(total, 'site')} monitored · last run {formatClock(lastRunAt)} (
-              {formatRelative(lastRunAt, now)}) · checks every 5 min
+              {plural(total, 'site')} monitored · last run{' '}
+              {lastRunAt === null
+                ? 'never'
+                : `${formatClock(lastRunAt)} (${formatRelative(lastRunAt, now)})`}{' '}
+              · checks every 5 min
             </p>
           </div>
         </div>
@@ -80,9 +83,10 @@ export function OverallStatusCard({
       {checkerStalled && (
         <p
           role="alert"
-          className="rounded-md bg-(--status-degraded-soft) px-4 py-3 text-sm text-(--status-degraded)"
+          className="rounded-md bg-(--status-degraded-soft) px-4 py-3 font-sans text-sm text-(--status-degraded)"
         >
-          {CHECKER_STALLED_MESSAGE}
+          {/* "Never ran" is a setup state, not a stall — say so instead of "over 15 minutes". */}
+          {lastRunAt === null ? CHECKER_NEVER_RAN_MESSAGE : CHECKER_STALLED_MESSAGE}
         </p>
       )}
     </section>

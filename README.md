@@ -28,7 +28,8 @@ Copy `.env.example` to `.env.local` and fill it in. Generate a secret with
 
 The two `NEXT_PUBLIC_*` variables are optional: without them the dashboard still
 works, it just refreshes on navigation and on "Check now" instead of pushing
-live updates. There is a visible note on the page when they are missing.
+live updates. The pill on the right of the top nav shows which mode is active:
+`Live` when they are set, `Live updates off` when they are not.
 
 ### GitHub Actions secrets
 

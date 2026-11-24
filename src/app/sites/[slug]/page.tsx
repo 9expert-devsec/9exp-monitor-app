@@ -123,7 +123,7 @@ export default async function SiteDetailPage({
           <Stat label="24h average" value={formatMs(avg24hMs)} />
           <Stat label="Uptime · 30d" value={formatPercent(uptime30d)} />
           <Stat label="Degraded above" value={formatMs(site.expected_ms)} desktopOnly />
-          <Stat label="Incidents · 30d" value={String(incidents30d)} desktopOnly />
+          <Stat label="Incidents · 30d" value={String(incidents30d)} />
         </dl>
 
         {(lastError || checks.length > 0) && (
@@ -214,7 +214,7 @@ function Stat({
 }: {
   label: string
   value: string
-  /** Dropped below 640 px so the stats fit a 2 × 2 grid. */
+  /** Dropped below 640 px so the other four fill a 2 × 2 grid exactly. */
   desktopOnly?: boolean
 }) {
   return (

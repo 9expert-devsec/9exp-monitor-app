@@ -10,6 +10,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Untracked design handoff material (specs, reference components), not app code.
+    "prompts/**",
   ]),
 ]);
 

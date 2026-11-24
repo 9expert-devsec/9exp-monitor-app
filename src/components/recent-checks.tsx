@@ -17,11 +17,11 @@ export function RecentChecks({ checks }: { checks: RecentCheck[] }) {
       {/* ≥ 640 px: table. */}
       <table className="hidden w-full text-sm sm:table">
         <thead>
-          <tr className="border-b border-(--border-subtle) text-left text-xs text-(--text-muted)">
-            <th scope="col" className="px-4 py-3 font-medium">Time</th>
-            <th scope="col" className="px-4 py-3 font-medium">Status</th>
-            <th scope="col" className="px-4 py-3 font-medium">HTTP</th>
-            <th scope="col" className="px-4 py-3 text-right font-medium">Response</th>
+          <tr className="label-overline border-b border-(--border-subtle) text-left">
+            <th scope="col" className="px-4 py-3 font-semibold">Time</th>
+            <th scope="col" className="px-4 py-3 font-semibold">Status</th>
+            <th scope="col" className="px-4 py-3 font-semibold">HTTP</th>
+            <th scope="col" className="px-4 py-3 text-right font-semibold">Response</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-(--border-subtle)">

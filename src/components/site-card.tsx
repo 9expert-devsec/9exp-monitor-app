@@ -14,7 +14,11 @@ import {
   formatRelative,
   hostOf,
 } from '@/lib/format'
-import { STALE_MESSAGE, slowerThanThresholdMessage } from '@/lib/messages'
+import {
+  SITE_NEVER_CHECKED_MESSAGE,
+  STALE_MESSAGE,
+  slowerThanThresholdMessage,
+} from '@/lib/messages'
 import { STATUS_COLOR, STATUS_SOFT, displayStatusOf } from '@/lib/status'
 import type { DisplayStatus, SiteSnapshot } from '@/lib/types'
 
@@ -25,17 +29,25 @@ import type { DisplayStatus, SiteSnapshot } from '@/lib/types'
  * The Thai "slower than threshold" sentence is only true for the first, so the
  * other causes show the checker's own error text instead of a wrong reason.
  */
-function messageFor(snapshot: SiteSnapshot, status: DisplayStatus): string | null {
+interface CardMessage {
+  text: string
+  /** `explain` is a Thai sentence (sans); `raw` is the checker's English error text (mono). */
+  kind: 'explain' | 'raw'
+}
+
+function messageFor(snapshot: SiteSnapshot, status: DisplayStatus): CardMessage | null {
   const { latest, openIncident, site } = snapshot
-  if (status === 'stale') return STALE_MESSAGE
+  if (status === 'stale') {
+    return { text: latest ? STALE_MESSAGE : SITE_NEVER_CHECKED_MESSAGE, kind: 'explain' }
+  }
   if (status === 'down') {
     const error = openIncident?.last_error ?? latest?.error
-    return error ? formatCheckError(error) : null
+    return error ? { text: formatCheckError(error), kind: 'raw' } : null
   }
   if (status === 'degraded') {
     const slow = latest?.response_ms != null && latest.response_ms > site.expected_ms
-    if (slow) return slowerThanThresholdMessage(site.expected_ms)
-    return latest?.error ? formatCheckError(latest.error) : null
+    if (slow) return { text: slowerThanThresholdMessage(site.expected_ms), kind: 'explain' }
+    return latest?.error ? { text: formatCheckError(latest.error), kind: 'raw' } : null
   }
   return null
 }
@@ -94,7 +106,7 @@ export function SiteCard({ snapshot, now }: { snapshot: SiteSnapshot; now: numbe
 
       <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="overline">Response time</p>
+          <p className="label-overline">Response time</p>
           <p
             className="mt-1 font-mono text-2xl leading-none font-bold"
             style={{ color: down ? 'var(--status-down)' : undefined }}
@@ -108,7 +120,7 @@ export function SiteCard({ snapshot, now }: { snapshot: SiteSnapshot; now: numbe
           )}
         </div>
         <div className="text-right">
-          <p className="overline">Uptime · 30d</p>
+          <p className="label-overline">Uptime · 30d</p>
           <p className="mt-1 font-mono text-base font-semibold">{formatPercent(uptime30d)}</p>
         </div>
       </div>
@@ -125,10 +137,12 @@ export function SiteCard({ snapshot, now }: { snapshot: SiteSnapshot; now: numbe
 
       {message && (
         <p
-          className="rounded-md px-3 py-2 font-mono text-xs wrap-break-word"
+          className={`rounded-md px-3 py-2 wrap-break-word ${
+            message.kind === 'raw' ? 'font-mono text-xs' : 'font-sans text-sm'
+          }`}
           style={{ background: STATUS_SOFT[status], color: STATUS_COLOR[status] }}
         >
-          {message}
+          {message.text}
         </p>
       )}
     </article>
