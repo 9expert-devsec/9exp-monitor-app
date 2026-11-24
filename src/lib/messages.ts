@@ -24,3 +24,25 @@ export const CHECKER_STALLED_MESSAGE =
 /** No check has ever been recorded, for any site. */
 export const CHECKER_NEVER_RAN_MESSAGE =
   'ยังไม่เคยมีผลตรวจ — กด Check now หรือรอ GitHub Actions รอบแรก'
+
+// --- Sign-in and passwords -------------------------------------------------
+
+/**
+ * Wrong email or password — the same text for both, on purpose. `attemptsLeft`
+ * is how many more failures the address has before it locks; the warning only
+ * appears once that is 1 or 2.
+ */
+export function wrongCredentialsMessage(attemptsLeft: number | null): string {
+  if (attemptsLeft !== null && attemptsLeft >= 1 && attemptsLeft <= 2) {
+    return `อีเมลหรือรหัสผ่านไม่ถูกต้อง — ผิดอีก ${attemptsLeft} ครั้ง บัญชีจะถูกล็อก 15 นาที`
+  }
+  return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'
+}
+
+export const ACCOUNT_LOCKED_MESSAGE = 'บัญชีถูกล็อกชั่วคราว 15 นาที เพราะใส่รหัสผ่านผิดหลายครั้ง'
+
+export const ACCOUNT_DISABLED_MESSAGE = 'บัญชีนี้ถูกปิดใช้งาน — ติดต่อผู้ดูแลระบบ'
+
+export const PASSWORD_TOO_SHORT_MESSAGE = 'รหัสผ่านต้องยาวอย่างน้อย 12 ตัวอักษร'
+
+export const PASSWORDS_DO_NOT_MATCH_MESSAGE = 'รหัสผ่านทั้งสองช่องไม่ตรงกัน'

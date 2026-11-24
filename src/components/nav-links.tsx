@@ -3,11 +3,21 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
+interface NavItem {
+  label: string
+  href: string
+  /** Hidden from viewers. The page itself also refuses them (404). */
+  adminOnly?: boolean
+}
+
 /**
  * The single source of the top-level navigation. Later rounds append to this
- * array (Sites, Notifications, Users, …); nothing else needs to change.
+ * array (Sites, Notifications, …); nothing else needs to change.
  */
-export const NAV_ITEMS: { label: string; href: string }[] = [{ label: 'Overview', href: '/' }]
+export const NAV_ITEMS: NavItem[] = [
+  { label: 'Overview', href: '/' },
+  { label: 'Users', href: '/users', adminOnly: true },
+]
 
 function isActive(pathname: string, href: string): boolean {
   if (href === '/') return pathname === '/' || pathname.startsWith('/sites/')
@@ -15,12 +25,13 @@ function isActive(pathname: string, href: string): boolean {
 }
 
 /** Hidden below 640 px this round. */
-export function NavLinks() {
+export function NavLinks({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname()
+  const items = NAV_ITEMS.filter((item) => isAdmin || !item.adminOnly)
 
   return (
     <nav aria-label="Main" className="hidden items-center gap-1 sm:flex">
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const active = isActive(pathname, item.href)
         return (
           <Link

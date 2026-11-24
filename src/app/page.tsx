@@ -1,11 +1,13 @@
 import { DashboardClient } from '@/components/dashboard-client'
 import { getDashboardData } from '@/lib/dashboard'
 import { publicRealtimeConfig } from '@/lib/env'
+import { requirePageSession } from '@/lib/session'
 
 /** Status is never cacheable — every request reflects the database as it is now. */
 export const dynamic = 'force-dynamic'
 
 export default async function DashboardPage() {
+  await requirePageSession()
   const { snapshots, lastRunAt, renderedAt } = await getDashboardData()
   const realtime = publicRealtimeConfig()
 

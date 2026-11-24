@@ -20,16 +20,15 @@ server-side in `POST /api/checks/run`.
 | `SUPABASE_URL`                  | yes      | server only    | Supabase project URL.                                              |
 | `SUPABASE_SERVICE_ROLE_KEY`     | yes      | server only    | Bypasses RLS. The only key that writes. Never expose it.           |
 | `CRON_SECRET`                   | yes      | server only    | Shared secret for `/api/checks/run` and `/api/checks/prune`.       |
-| `NEXT_PUBLIC_SUPABASE_URL`      | no       | browser        | Enables Realtime push updates on the dashboard.                    |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | no       | browser        | Publishable anon key. RLS grants it `SELECT` and nothing else.     |
+| `NEXT_PUBLIC_SUPABASE_URL`      | yes      | browser        | Sign-in, session cookies and Realtime.                             |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes      | browser        | Publishable anon key. Alone it reads nothing; with a session, RLS. |
 
 Copy `.env.example` to `.env.local` and fill it in. Generate a secret with
 `openssl rand -hex 32`.
 
-The two `NEXT_PUBLIC_*` variables are optional: without them the dashboard still
-works, it just refreshes on navigation and on "Check now" instead of pushing
-live updates. The pill on the right of the top nav shows which mode is active:
-`Live` when they are set, `Live updates off` when they are not.
+The two `NEXT_PUBLIC_*` variables are required since sign-in was added: auth,
+the session cookies and Realtime all run on them. The pill on the right of the
+top nav shows whether live updates are on (`Live`) or off (`Live updates off`).
 
 ### GitHub Actions secrets
 
@@ -47,20 +46,50 @@ Both workflows need:
 ```bash
 npm install
 
-# 1. Apply the migration (Supabase CLI, or paste it into the SQL editor)
+# 1. Apply the migrations in order (Supabase CLI, or paste each into the SQL editor)
 supabase db push
 #   or: supabase/migrations/20260804090000_init_monitor.sql
+#       supabase/migrations/20261124120000_auth_profiles.sql
 
 # 2. Seed the site registry from config/sites.ts
 npm run seed
 
-# 3. Run
+# 3. Create the first admin (prints a temporary password once)
+npm run create-admin -- --email you@example.com --name "Your Name"
+
+# 4. Run
 npm run dev
 ```
 
 Then confirm Realtime is on for `health_checks` and `incidents` in
 **Supabase → Database → Replication**. The migration adds both tables to the
 `supabase_realtime` publication, but only if the publication already exists.
+
+---
+
+## Accounts
+
+Email + password through Supabase Auth. There is no public sign-up, no OAuth
+and no magic link: an admin creates every account on **Users** (`/users`), and
+the first admin comes from `npm run create-admin`. Turn off
+**Authentication → Sign In / Providers → Allow new users to sign up** in the
+Supabase dashboard as well; the app never calls `signUp`.
+
+- **Roles:** `admin` manages users (and, later, sites and notifications);
+  `viewer` is read-only but may press "Check now".
+- **Temporary passwords:** new accounts and resets get a generated
+  16-character password, shown to the admin once. The user must set their own
+  (12+ characters) at the next sign-in.
+- **Lockout:** 5 wrong passwords for an address lock it for 15 minutes
+  (`login_failures`). An unknown email and a wrong password get the same reply.
+- **Disabling** an account sets `profiles.disabled` and bans the user in
+  Supabase Auth, so their refresh tokens stop working; the next request signs
+  them out. An admin cannot disable or demote themselves, and the last active
+  admin can never be disabled or demoted.
+- **Where it is enforced:** `src/proxy.ts` refreshes the session and redirects
+  (signed out → `/login`, disabled → signed out, temporary password →
+  `/account/password`). Pages and Server Actions check again on their own
+  (`src/lib/session.ts`). `/users` answers a viewer with the normal 404.
 
 ---
 
@@ -233,6 +262,7 @@ swallowed — a broken webhook must never fail a run or lose a recorded check.
 | `npm run build`     | Production build                                  |
 | `npm run seed`      | Sync `monitored_sites` from `config/sites.ts`     |
 | `npm run check:local` | Fire the checker against a running server       |
+| `npm run create-admin` | Create the first admin (see Accounts)          |
 | `npm run lint`      | ESLint                                            |
 | `npm run typecheck` | `tsc --noEmit`                                    |
 
@@ -258,10 +288,12 @@ lands every 6–10 minutes. That is why the staleness threshold is 15 minutes.
 
 - **Writes:** service role only, server-side. RLS defines no write policy for
   `anon` or `authenticated`, so browser writes are denied outright.
-- **Reads:** the dashboard's initial paint reads via the service role in a
-  Server Component. `anon` additionally has `SELECT`, which is what Supabase
-  Realtime requires to deliver events at all. This data is non-sensitive status
-  information that the page already renders.
+- **Reads:** signed-in users only. Pages verify the session, then read via the
+  service role in a Server Component. In the database, `anon` has no access to
+  any monitoring table; `authenticated` has `SELECT`, which is what Supabase
+  Realtime needs to deliver events to the dashboard's signed-in socket.
+  `profiles` is readable only row-by-row by its owner; `login_failures` by the
+  service role only.
 - **Secrets:** `src/lib/env.ts`, `src/lib/checker.ts`, `src/lib/dashboard.ts`
   and `src/lib/supabase/server.ts` all import `server-only`, so pulling any of
   them into a client component is a build error rather than a leak.
@@ -290,11 +322,9 @@ Places where this deviates from, or resolves ambiguity in, the original spec:
    which transition occurred, and the notifier is invoked from TypeScript.
 
 4. **"Check now" is a Server Action, not a session-authenticated route.** The
-   spec asked for `POST /api/checks/run` authenticated by the dashboard session;
-   this app has no login. Next.js only accepts Server Actions as same-origin
-   POSTs carrying a valid action id, which is a stronger gate than an
-   unauthenticated public route and keeps `CRON_SECRET` away from the browser.
-   It calls the same `runChecks()`. A 15-second per-instance cooldown stops a
+   action verifies the signed-in session itself (any enabled account, viewers
+   included), keeps `CRON_SECRET` away from the browser, and calls the same
+   `runChecks()` as `POST /api/checks/run`. A 15-second per-instance cooldown stops a
    held-down button from hammering the monitored sites.
 
 5. **Non-2xx below 500 is `degraded`, not `up`.** Read literally, "up —
@@ -305,10 +335,10 @@ Places where this deviates from, or resolves ambiguity in, the original spec:
 6. **Rollup days are Bangkok-local, not UTC.** A "day" on the history bar should
    match the day the team actually worked.
 
-7. **Realtime needs an anon `SELECT` policy.** Postgres changes are filtered by
-   RLS before delivery, so a dashboard that subscribes has to be able to read.
-   Writes remain denied. The two `NEXT_PUBLIC_*` variables are additions to the
-   specified env list, and are optional.
+7. **Realtime runs on the user's session.** Postgres changes are filtered by
+   RLS before delivery, so the subscriber has to be able to read. The browser
+   client carries the signed-in session, so `authenticated` needs `SELECT` and
+   `anon` needs nothing. Writes remain denied.
 
 8. **Charts are hand-rolled inline SVG.** No charting library. The series is
    bucketed in Postgres by `site_response_series()`, so a 30-day window arrives

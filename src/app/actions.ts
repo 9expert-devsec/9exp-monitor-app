@@ -3,17 +3,17 @@
 import { revalidatePath } from 'next/cache'
 
 import { runChecks } from '@/lib/checker'
+import { authorizeAction } from '@/lib/session'
 import type { RunSummary } from '@/lib/types'
 
 /**
  * "Check now", backing the dashboard button.
  *
- * The spec asked for a session-authenticated variant of `POST /api/checks/run`.
- * This app has no login, so the dashboard uses a Server Action instead: Next.js
- * only accepts these as same-origin POSTs with a valid action id, which is a
- * meaningfully stronger gate than an unauthenticated public route and does not
- * require putting `CRON_SECRET` anywhere near the browser. It calls the exact
- * same `runChecks()` as the cron route.
+ * Any signed-in, enabled account may run it — viewers included. Server Actions
+ * are public POST endpoints whatever the UI shows, so the session is verified
+ * here rather than trusted from the page. It calls the exact same
+ * `runChecks()` as the cron route, and keeps `CRON_SECRET` away from the
+ * browser.
  */
 
 /**
@@ -30,6 +30,8 @@ export type ManualRunResult =
   | { ok: false; error: string }
 
 export async function runChecksAction(): Promise<ManualRunResult> {
+  if (!(await authorizeAction())) return { ok: false, error: 'Sign in again to run checks.' }
+
   const now = Date.now()
   if (now - lastManualRunAt < MANUAL_COOLDOWN_MS) {
     const wait = Math.ceil((MANUAL_COOLDOWN_MS - (now - lastManualRunAt)) / 1000)

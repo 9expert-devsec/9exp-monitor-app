@@ -1,22 +1,19 @@
 'use client'
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-
-let cached: SupabaseClient | null = null
+import { createBrowserClient } from '@supabase/ssr'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * Anon-key client, used for one thing only: subscribing to Realtime.
+ * The browser client, used for Realtime only.
  *
- * The anon key is publishable by design. RLS grants it SELECT and nothing else,
- * so the worst it can do is read status data that the dashboard already renders.
+ * It reads the session from the auth cookies, so the Realtime socket carries
+ * the signed-in user's JWT and `postgres_changes` are delivered to the
+ * `authenticated` role (anon has no SELECT any more). supabase-js hands the
+ * refreshed token to Realtime on its own whenever the session rotates.
+ * `createBrowserClient` is a singleton in the browser.
  */
 export function realtimeClient(url: string, anonKey: string): SupabaseClient {
-  if (cached) return cached
-
-  cached = createClient(url, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
+  return createBrowserClient(url, anonKey, {
     realtime: { params: { eventsPerSecond: 5 } },
   })
-
-  return cached
 }

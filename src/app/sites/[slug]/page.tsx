@@ -21,6 +21,7 @@ import {
   formatPercent,
   formatRelative,
 } from '@/lib/format'
+import { requirePageSession } from '@/lib/session'
 import { displayStatusOf } from '@/lib/status'
 
 export const dynamic = 'force-dynamic'
@@ -39,6 +40,7 @@ export default async function SiteDetailPage({
   params: Promise<{ slug: string }>
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
+  await requirePageSession()
   const { slug } = await params
   const range = parseRange((await searchParams).range)
 

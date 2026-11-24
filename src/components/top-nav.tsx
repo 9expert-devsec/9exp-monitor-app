@@ -1,7 +1,9 @@
 import Link from 'next/link'
 
+import { AvatarMenu } from '@/components/avatar-menu'
 import { Logo } from '@/components/logo'
 import { NavLinks } from '@/components/nav-links'
+import { getSession } from '@/lib/session'
 
 /** Live / off pill on the right of the nav. */
 function LivePill({ live }: { live: boolean }) {
@@ -20,7 +22,12 @@ function LivePill({ live }: { live: boolean }) {
   )
 }
 
-export function TopNav({ live }: { live: boolean }) {
+/** Rendered only for a signed-in user — the login page has no nav. */
+export async function TopNav({ live }: { live: boolean }) {
+  const session = await getSession()
+  if (!session) return null
+  const { profile, email } = session
+
   return (
     <header className="h-16 border-b border-(--border-subtle) bg-(--surface-card)">
       <div className="flex h-full items-center gap-8 px-4 sm:px-12">
@@ -33,10 +40,11 @@ export function TopNav({ live }: { live: boolean }) {
           </span>
         </Link>
 
-        <NavLinks />
+        <NavLinks isAdmin={profile.role === 'admin' && !profile.disabled} />
 
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
           <LivePill live={live} />
+          <AvatarMenu name={profile.full_name} email={email} />
         </div>
       </div>
     </header>

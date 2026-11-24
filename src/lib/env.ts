@@ -29,8 +29,9 @@ export function cronSecret(): string {
 }
 
 /**
- * Realtime is optional. When these are absent the dashboard still renders and
- * still updates on manual "Check now"; it just will not push live updates.
+ * The publishable pair, as a nullable value for the "Live" pill and the
+ * dashboard's Realtime subscription. Since auth, sign-in itself needs both —
+ * see `publicSupabaseConfig()` in src/lib/supabase/config.ts, which throws.
  */
 export function publicRealtimeConfig(): { url: string; anonKey: string } | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
