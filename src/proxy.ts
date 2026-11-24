@@ -97,9 +97,10 @@ export const config = {
      * Everything except:
      * - /api/checks/run, /api/checks/prune — CRON_SECRET auth, unchanged
      * - /_next/static, /_next/image       — build output
-     * - /icon.svg, /logo.svg              — favicon and the login card's logo
+     * - /icon.png, /apple-icon.png        — favicon and touch icon
+     * - /logo.png                         — the login card's logo
      * - /fonts/*                          — the brand font the login page uses
      */
-    '/((?!api/checks/run|api/checks/prune|_next/static|_next/image|icon\\.svg|logo\\.svg|fonts/).*)',
+    '/((?!api/checks/run|api/checks/prune|_next/static|_next/image|icon\\.png|apple-icon\\.png|logo\\.png|fonts/).*)',
   ],
 }
