@@ -1,11 +1,13 @@
 'use client'
 
+import { RefreshCw } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 
 import { runChecksAction } from '@/app/actions'
+import { Button } from '@/components/button'
 
-export function CheckNowButton() {
+export function CheckNowButton({ className = '' }: { className?: string }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -25,18 +27,13 @@ export function CheckNowButton() {
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={pending}
-        className="rounded-lg px-3.5 py-2 text-sm font-bold transition-opacity hover:opacity-90 disabled:cursor-progress disabled:opacity-60"
-        style={{ background: 'var(--color-brand-lime)', color: '#0a1834' }}
-      >
+    <div className={`flex flex-col items-stretch gap-1 sm:items-end ${className}`}>
+      <Button variant="primary" onClick={handleClick} disabled={pending}>
+        <RefreshCw size={16} aria-hidden="true" className={pending ? 'animate-spin' : ''} />
         {pending ? 'Checking…' : 'Check now'}
-      </button>
+      </Button>
       {error && (
-        <p role="status" className="text-xs" style={{ color: 'var(--status-down)' }}>
+        <p role="status" className="text-xs text-(--status-down)">
           {error}
         </p>
       )}

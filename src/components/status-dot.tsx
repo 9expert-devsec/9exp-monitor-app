@@ -10,15 +10,20 @@ import type { DisplayStatus } from '@/lib/types'
  *   degraded  filled triangle
  *   down      filled square
  *   stale     hollow diamond
+ *
+ * Used at 12 / 14 / 20 / 24 px. Pass `decorative` when a visible label next to
+ * it already names the status, so screen readers do not hear it twice.
  */
 export function StatusDot({
   status,
   size = 12,
   className,
+  decorative = false,
 }: {
   status: DisplayStatus
   size?: number
   className?: string
+  decorative?: boolean
 }) {
   const color = STATUS_COLOR[status]
 
@@ -27,8 +32,9 @@ export function StatusDot({
       width={size}
       height={size}
       viewBox="0 0 12 12"
-      role="img"
-      aria-label={STATUS_LABEL[status]}
+      role={decorative ? undefined : 'img'}
+      aria-label={decorative ? undefined : STATUS_LABEL[status]}
+      aria-hidden={decorative ? true : undefined}
       className={className}
       style={{ flexShrink: 0 }}
     >

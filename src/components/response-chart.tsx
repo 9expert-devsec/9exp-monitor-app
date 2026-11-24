@@ -1,12 +1,18 @@
-import { formatMs, formatTime } from '@/lib/format'
+import { formatMs, formatShortDateTime } from '@/lib/format'
 import type { SeriesPoint } from '@/lib/dashboard'
 
 const WIDTH = 960
 const HEIGHT = 260
-const PADDING = { top: 16, right: 16, bottom: 28, left: 52 }
+const PADDING = { top: 16, right: 16, bottom: 30, left: 60 }
 
 const PLOT_WIDTH = WIDTH - PADDING.left - PADDING.right
 const PLOT_HEIGHT = HEIGHT - PADDING.top - PADDING.bottom
+
+const AXIS_TEXT = {
+  fontSize: 12,
+  fill: 'var(--text-muted)',
+  fontFamily: 'var(--font-mono)',
+} as const
 
 /** Rounds a max value up to something that makes a readable axis. */
 function niceCeiling(value: number): number {
@@ -15,13 +21,25 @@ function niceCeiling(value: number): number {
   return Math.ceil(value / magnitude) * magnitude
 }
 
+/** Consecutive buckets containing a `down` check, merged into [start, end] index pairs. */
+function downtimeSpans(series: SeriesPoint[]): [number, number][] {
+  const spans: [number, number][] = []
+  series.forEach((point, index) => {
+    if (point.down_count === 0) return
+    const last = spans[spans.length - 1]
+    if (last && last[1] === index - 1) last[1] = index
+    else spans.push([index, index])
+  })
+  return spans
+}
+
 /**
  * Response time over the selected window, rendered as inline SVG.
  *
  * The series is already bucketed by `site_response_series()` in Postgres, so
- * this never has to thin thousands of raw rows in the browser. Buckets that
- * contain a `down` check are marked so an outage reads as a gap with a flag,
- * not as a line that quietly dips to zero.
+ * this never has to thin thousands of raw rows in the browser. Downtime is drawn
+ * as a red band behind the line, so an outage reads as a marked gap rather than
+ * a line that quietly dips to zero.
  */
 export function ResponseChart({
   series,
@@ -32,12 +50,9 @@ export function ResponseChart({
 }) {
   const measured = series.filter((point) => point.avg_response_ms !== null)
 
-  if (measured.length === 0) {
+  if (series.length === 0 || measured.length === 0) {
     return (
-      <div
-        className="flex h-56 items-center justify-center rounded-xl border text-sm"
-        style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}
-      >
+      <div className="flex h-56 items-center justify-center rounded-md border border-(--border-subtle) text-sm text-(--text-muted)">
         No response-time data in this window.
       </div>
     )
@@ -52,11 +67,10 @@ export function ResponseChart({
   const firstTs = Date.parse(series[0].bucket)
   const lastTs = Date.parse(series[series.length - 1].bucket)
   const span = Math.max(1, lastTs - firstTs)
+  const stepPx = series.length > 1 ? PLOT_WIDTH / (series.length - 1) : PLOT_WIDTH
 
-  const x = (iso: string) =>
-    PADDING.left + ((Date.parse(iso) - firstTs) / span) * PLOT_WIDTH
-  const y = (ms: number) =>
-    PADDING.top + PLOT_HEIGHT - (Math.min(ms, yMax) / yMax) * PLOT_HEIGHT
+  const x = (iso: string) => PADDING.left + ((Date.parse(iso) - firstTs) / span) * PLOT_WIDTH
+  const y = (ms: number) => PADDING.top + PLOT_HEIGHT - (Math.min(ms, yMax) / yMax) * PLOT_HEIGHT
 
   const linePath = measured
     .map((point, index) => {
@@ -65,29 +79,42 @@ export function ResponseChart({
     })
     .join(' ')
 
-  const areaPath = `${linePath} L${x(measured[measured.length - 1].bucket).toFixed(1)} ${
-    PADDING.top + PLOT_HEIGHT
-  } L${x(measured[0].bucket).toFixed(1)} ${PADDING.top + PLOT_HEIGHT} Z`
-
   const gridValues = [0, 0.25, 0.5, 0.75, 1].map((fraction) => Math.round(yMax * fraction))
-  const outages = series.filter((point) => point.down_count > 0)
+  const middle = series[Math.floor(series.length / 2)]
 
   return (
     <div className="overflow-x-auto">
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="h-64 w-full min-w-[560px]"
+        className="h-64 w-full min-w-140"
         role="img"
-        aria-label={`Response time from ${formatTime(series[0].bucket)} to ${formatTime(
+        aria-label={`Response time from ${formatShortDateTime(series[0].bucket)} to ${formatShortDateTime(
           series[series.length - 1].bucket,
         )}`}
       >
-        <defs>
-          <linearGradient id="response-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--color-brand-blue)" stopOpacity="0.28" />
-            <stop offset="100%" stopColor="var(--color-brand-blue)" stopOpacity="0" />
-          </linearGradient>
-        </defs>
+        {downtimeSpans(series).map(([start, end]) => {
+          const left = Math.max(PADDING.left, x(series[start].bucket) - stepPx / 2)
+          const right = Math.min(WIDTH - PADDING.right, x(series[end].bucket) + stepPx / 2)
+          const downCount = series
+            .slice(start, end + 1)
+            .reduce((total, point) => total + point.down_count, 0)
+          return (
+            <rect
+              key={`down-${series[start].bucket}`}
+              x={left}
+              y={PADDING.top}
+              width={Math.max(2, right - left)}
+              height={PLOT_HEIGHT}
+              fill="var(--status-down-soft)"
+            >
+              <title>
+                {`Downtime ${formatShortDateTime(series[start].bucket)} – ${formatShortDateTime(
+                  series[end].bucket,
+                )} · ${downCount} down check${downCount === 1 ? '' : 's'}`}
+              </title>
+            </rect>
+          )
+        })}
 
         {gridValues.map((value) => (
           <g key={value}>
@@ -99,13 +126,7 @@ export function ResponseChart({
               stroke="var(--border-subtle)"
               strokeWidth="1"
             />
-            <text
-              x={PADDING.left - 8}
-              y={y(value) + 4}
-              textAnchor="end"
-              fontSize="11"
-              fill="var(--text-muted)"
-            >
+            <text x={PADDING.left - 10} y={y(value) + 4} textAnchor="end" {...AXIS_TEXT}>
               {formatMs(value)}
             </text>
           </g>
@@ -121,35 +142,11 @@ export function ResponseChart({
           strokeWidth="1.5"
           strokeDasharray="6 4"
         />
-        <text
-          x={WIDTH - PADDING.right}
-          y={y(expectedMs) - 6}
-          textAnchor="end"
-          fontSize="11"
-          fill="var(--status-degraded)"
-        >
-          degraded above {formatMs(expectedMs)}
-        </text>
 
-        {outages.map((point) => (
-          <rect
-            key={`outage-${point.bucket}`}
-            x={x(point.bucket) - 1.5}
-            y={PADDING.top}
-            width="3"
-            height={PLOT_HEIGHT}
-            fill="var(--status-down)"
-            opacity="0.5"
-          >
-            <title>{`${formatTime(point.bucket)} — ${point.down_count} down`}</title>
-          </rect>
-        ))}
-
-        <path d={areaPath} fill="url(#response-fill)" />
         <path
           d={linePath}
           fill="none"
-          stroke="var(--color-brand-blue)"
+          stroke="var(--brand-nine-blue)"
           strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -164,27 +161,19 @@ export function ResponseChart({
             fill="transparent"
           >
             <title>
-              {`${formatTime(point.bucket)} — avg ${formatMs(point.avg_response_ms)}, max ${formatMs(point.max_response_ms)}`}
+              {`${formatShortDateTime(point.bucket)} — avg ${formatMs(point.avg_response_ms)}, max ${formatMs(point.max_response_ms)}`}
             </title>
           </circle>
         ))}
 
-        <text
-          x={PADDING.left}
-          y={HEIGHT - 8}
-          fontSize="11"
-          fill="var(--text-muted)"
-        >
-          {formatTime(series[0].bucket)}
+        <text x={PADDING.left} y={HEIGHT - 8} {...AXIS_TEXT}>
+          {formatShortDateTime(series[0].bucket)}
         </text>
-        <text
-          x={WIDTH - PADDING.right}
-          y={HEIGHT - 8}
-          textAnchor="end"
-          fontSize="11"
-          fill="var(--text-muted)"
-        >
-          {formatTime(series[series.length - 1].bucket)}
+        <text x={x(middle.bucket)} y={HEIGHT - 8} textAnchor="middle" {...AXIS_TEXT}>
+          {formatShortDateTime(middle.bucket)}
+        </text>
+        <text x={WIDTH - PADDING.right} y={HEIGHT - 8} textAnchor="end" {...AXIS_TEXT}>
+          {formatShortDateTime(series[series.length - 1].bucket)}
         </text>
       </svg>
     </div>

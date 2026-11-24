@@ -24,7 +24,8 @@ export function formatPercent(value: number | null | undefined): string {
 }
 
 /**
- * Signed difference against a baseline, e.g. "+120ms vs 24h avg".
+ * Relative difference against a baseline: "▲ 312% vs 24h avg",
+ * "▼ 6% vs 24h avg" or "Same as 24h avg".
  * Returns null when there is nothing meaningful to compare.
  */
 export function formatDelta(
@@ -32,17 +33,59 @@ export function formatDelta(
   baseline: number | null | undefined,
 ): { text: string; direction: 'faster' | 'slower' | 'flat' } | null {
   if (current === null || current === undefined) return null
-  if (baseline === null || baseline === undefined || baseline === 0) return null
+  if (baseline === null || baseline === undefined || baseline <= 0) return null
 
-  const delta = current - baseline
-  // Under 5% is noise, not a trend.
-  if (Math.abs(delta) / baseline < 0.05) {
-    return { text: `≈ 24h avg`, direction: 'flat' }
-  }
-  const sign = delta > 0 ? '+' : '−'
-  return {
-    text: `${sign}${formatMs(Math.abs(delta))} vs 24h avg`,
-    direction: delta > 0 ? 'slower' : 'faster',
+  const percent = Math.round(((current - baseline) / baseline) * 100)
+  if (percent === 0) return { text: 'Same as 24h avg', direction: 'flat' }
+  return percent > 0
+    ? { text: `▲ ${percent}% vs 24h avg`, direction: 'slower' }
+    : { text: `▼ ${Math.abs(percent)}% vs 24h avg`, direction: 'faster' }
+}
+
+/** "14:05", Bangkok time. */
+export function formatClock(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+/** "Aug 26 14:05", Bangkok time. */
+export function formatShortDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  const day = date.toLocaleDateString('en-US', {
+    timeZone: TIME_ZONE,
+    month: 'short',
+    day: 'numeric',
+  })
+  return `${day} ${formatClock(iso)}`
+}
+
+/** "Aug 26" for a YYYY-MM-DD rollup day key. */
+export function formatMonthDay(day: string): string {
+  const date = new Date(`${day}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return day
+  return date.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' })
+}
+
+/** "HTTP 503 Service Unavailable" → "HTTP 503 · Service Unavailable". */
+export function formatCheckError(error: string): string {
+  return error.replace(/^HTTP (\d{3}) (?=\S)/, 'HTTP $1 · ')
+}
+
+/** "www.9expert.co.th" from a full URL; the raw string if it does not parse. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
   }
 }
 
@@ -96,7 +139,7 @@ export function formatDuration(startIso: string, endIso: string | null, now = Da
   if (Number.isNaN(start) || Number.isNaN(end)) return '—'
 
   const totalMinutes = Math.max(1, Math.round((end - start) / 60_000))
-  if (totalMinutes < 60) return `${totalMinutes} min`
+  if (totalMinutes < 60) return `${totalMinutes}m`
 
   const hours = Math.floor(totalMinutes / 60)
   const minutes = totalMinutes % 60

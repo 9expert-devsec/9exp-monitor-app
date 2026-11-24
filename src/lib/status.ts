@@ -7,7 +7,7 @@ import type { CheckStatus, DisplayStatus, HealthCheck } from './types'
  */
 export const STALE_AFTER_MS = 15 * 60 * 1000
 
-const SEVERITY: Record<DisplayStatus, number> = {
+export const SEVERITY: Record<DisplayStatus, number> = {
   up: 0,
   stale: 1,
   degraded: 2,
@@ -41,7 +41,7 @@ export const STATUS_LABEL: Record<DisplayStatus, string> = {
   up: 'Operational',
   degraded: 'Degraded',
   down: 'Down',
-  stale: 'No recent data',
+  stale: 'No data',
 }
 
 /**
@@ -53,6 +53,13 @@ export const STATUS_COLOR: Record<DisplayStatus, string> = {
   degraded: 'var(--status-degraded)',
   down: 'var(--status-down)',
   stale: 'var(--status-stale)',
+}
+
+export const STATUS_SOFT: Record<DisplayStatus, string> = {
+  up: 'var(--status-up-soft)',
+  degraded: 'var(--status-degraded-soft)',
+  down: 'var(--status-down-soft)',
+  stale: 'var(--status-stale-soft)',
 }
 
 /** Classifies one dependency chip from `payload.checks[]`. */

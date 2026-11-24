@@ -1,33 +1,38 @@
 'use client'
 
+import { TriangleAlert } from 'lucide-react'
+import { useEffect } from 'react'
+
+import { Button } from '@/components/button'
+
 export default function DashboardError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string }
-  reset: () => void
+  retry: () => void
 }) {
+  useEffect(() => {
+    console.error(error)
+  }, [error])
+
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-col items-start gap-4 px-4 py-20">
-      <h1 className="text-2xl font-extrabold">The monitor itself is broken</h1>
-      <p style={{ color: 'var(--text-secondary)' }}>
-        The dashboard could not load its data. This is a fault in the monitor, not
-        necessarily in the sites it watches — check the Supabase connection and the
-        environment variables listed in <code>.env.example</code>.
+    <main className="mx-auto flex w-full max-w-140 flex-1 flex-col items-center justify-center gap-5 px-4 py-20 text-center">
+      <TriangleAlert size={48} aria-hidden="true" className="text-(--status-degraded)" />
+      <h1 className="text-[28px] leading-tight font-bold">The monitor itself is broken</h1>
+      <p className="text-(--text-secondary)">
+        Dashboard โหลดข้อมูลไม่ได้ — ปัญหานี้อยู่ที่ระบบ Monitor ไม่ได้แปลว่าเว็บที่ตรวจอยู่ล่ม
+        ตรวจการเชื่อมต่อ Supabase และค่า Environment ตาม .env.example
       </p>
-      {error.digest && (
-        <p className="font-mono text-xs" style={{ color: 'var(--text-muted)' }}>
-          digest {error.digest}
-        </p>
-      )}
-      <button
-        type="button"
-        onClick={reset}
-        className="rounded-lg px-3.5 py-2 text-sm font-bold"
-        style={{ background: 'var(--color-brand-lime)', color: '#0a1834' }}
-      >
+      {/* `retry` re-fetches the segment's server data; `reset` would only re-render it. */}
+      <Button variant="primary" onClick={() => retry()}>
         Try again
-      </button>
+      </Button>
+      {error.digest && (
+        <code className="rounded-sm border border-(--border-subtle) bg-(--surface-sunken) px-2 py-1 font-mono text-xs text-(--text-muted)">
+          digest {error.digest}
+        </code>
+      )}
     </main>
   )
 }

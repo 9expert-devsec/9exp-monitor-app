@@ -1,125 +1,156 @@
+import { ChevronRight, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 
-import { DependencyChips } from '@/components/dependency-chips'
+import { DependencyChips, checksOf } from '@/components/dependency-chips'
 import { HistoryBar } from '@/components/history-bar'
 import { StatusDot } from '@/components/status-dot'
-import { formatDelta, formatMs, formatPercent, formatRelative } from '@/lib/format'
-import { STATUS_LABEL, displayStatusOf } from '@/lib/status'
-import type { HealthDependency, SiteSnapshot } from '@/lib/types'
+import { StatusPill } from '@/components/status-pill'
+import {
+  formatCheckError,
+  formatDelta,
+  formatDuration,
+  formatMs,
+  formatPercent,
+  formatRelative,
+  hostOf,
+} from '@/lib/format'
+import { STALE_MESSAGE, slowerThanThresholdMessage } from '@/lib/messages'
+import { STATUS_COLOR, STATUS_SOFT, displayStatusOf } from '@/lib/status'
+import type { DisplayStatus, SiteSnapshot } from '@/lib/types'
 
-function checksOf(snapshot: SiteSnapshot): HealthDependency[] {
-  const checks = snapshot.latest?.payload?.checks
-  return Array.isArray(checks) ? checks : []
+/**
+ * The one-line explanation under a card that is not operational.
+ *
+ * Degraded has several causes (slow, failing dependency, bad payload, non-2xx).
+ * The Thai "slower than threshold" sentence is only true for the first, so the
+ * other causes show the checker's own error text instead of a wrong reason.
+ */
+function messageFor(snapshot: SiteSnapshot, status: DisplayStatus): string | null {
+  const { latest, openIncident, site } = snapshot
+  if (status === 'stale') return STALE_MESSAGE
+  if (status === 'down') {
+    const error = openIncident?.last_error ?? latest?.error
+    return error ? formatCheckError(error) : null
+  }
+  if (status === 'degraded') {
+    const slow = latest?.response_ms != null && latest.response_ms > site.expected_ms
+    if (slow) return slowerThanThresholdMessage(site.expected_ms)
+    return latest?.error ? formatCheckError(latest.error) : null
+  }
+  return null
 }
+
+const DELTA_COLOR = {
+  slower: 'var(--status-degraded)',
+  faster: 'var(--status-up)',
+  flat: 'var(--text-muted)',
+} as const
 
 export function SiteCard({ snapshot, now }: { snapshot: SiteSnapshot; now: number }) {
   const { site, latest, avg24hMs, uptime30d, history, openIncident } = snapshot
   const status = displayStatusOf(latest, now)
-  const delta = formatDelta(latest?.response_ms, avg24hMs)
+  const down = status === 'down'
+  const delta = down ? null : formatDelta(latest?.response_ms, avg24hMs)
+  const message = messageFor(snapshot, status)
+  const checks = checksOf(latest?.payload)
 
   return (
     <article
-      className="flex flex-col gap-4 rounded-xl border p-4 shadow-sm"
+      className="flex flex-col gap-4 rounded-lg bg-(--surface-card) p-5"
       style={{
-        background: 'var(--surface-card)',
-        borderColor: status === 'down' ? 'var(--status-down)' : 'var(--border-subtle)',
+        border: down ? '1.5px solid var(--status-down)' : '1px solid var(--border-subtle)',
       }}
     >
       <header className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <StatusDot status={status} size={14} className="mt-1" />
-          <div className="min-w-0">
-            <Link
-              href={`/sites/${site.slug}`}
-              className="block truncate font-bold hover:underline"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {site.name}
-            </Link>
-            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-              {STATUS_LABEL[status]} · checked {formatRelative(latest?.checked_at, now)}
-            </p>
-          </div>
+        <div className="min-w-0">
+          <Link
+            href={`/sites/${site.slug}`}
+            className="block truncate text-base font-semibold hover:underline"
+          >
+            {site.name}
+          </Link>
+          <p className="truncate font-mono text-xs text-(--text-muted)">{hostOf(site.url)}</p>
         </div>
-
         <a
           href={site.url}
           target="_blank"
           rel="noreferrer noopener"
           aria-label={`Open ${site.name} in a new tab`}
-          title={`Open ${site.url}`}
-          className="shrink-0 rounded p-1 hover:opacity-70"
-          style={{ color: 'var(--text-muted)' }}
+          title={site.url}
+          className="shrink-0 rounded-sm p-1 text-(--text-muted) hover:text-(--text-primary)"
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <path
-              d="M5.5 2H2v10h10V8.5M8.5 1.5H12.5V5.5M12.5 1.5L6.5 7.5"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <ExternalLink size={16} aria-hidden="true" />
         </a>
       </header>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusPill status={status} />
+        <span className="text-xs text-(--text-muted)">
+          {down && openIncident
+            ? `Down for ${formatDuration(openIncident.started_at, null, now)}`
+            : `Checked ${formatRelative(latest?.checked_at, now)}`}
+        </span>
+      </div>
+
       <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="font-mono text-2xl font-bold leading-none">
-            {formatMs(latest?.response_ms)}
+          <p className="overline">Response time</p>
+          <p
+            className="mt-1 font-mono text-2xl leading-none font-bold"
+            style={{ color: down ? 'var(--status-down)' : undefined }}
+          >
+            {down ? '—' : formatMs(latest?.response_ms)}
           </p>
           {delta && (
-            <p
-              className="mt-1 text-xs"
-              style={{
-                color:
-                  delta.direction === 'slower'
-                    ? 'var(--status-degraded)'
-                    : delta.direction === 'faster'
-                      ? 'var(--status-up)'
-                      : 'var(--text-muted)',
-              }}
-            >
-              {delta.direction === 'slower' ? '▲ ' : delta.direction === 'faster' ? '▼ ' : ''}
+            <p className="mt-1.5 text-xs" style={{ color: DELTA_COLOR[delta.direction] }}>
               {delta.text}
             </p>
           )}
         </div>
         <div className="text-right">
-          <p className="font-mono text-lg font-bold leading-none">
-            {formatPercent(uptime30d)}
-          </p>
-          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-            uptime · 30d
-          </p>
+          <p className="overline">Uptime · 30d</p>
+          <p className="mt-1 font-mono text-base font-semibold">{formatPercent(uptime30d)}</p>
         </div>
       </div>
 
       <div>
         <HistoryBar history={history} />
-        <div
-          className="mt-1 flex justify-between text-[11px]"
-          style={{ color: 'var(--text-muted)' }}
-        >
+        <div className="mt-1.5 flex justify-between text-xs text-(--text-muted)">
           <span>90 days ago</span>
-          <span>today</span>
+          <span>Today</span>
         </div>
       </div>
 
-      <DependencyChips checks={checksOf(snapshot)} />
+      <DependencyChips checks={checks} />
 
-      {(latest?.error || openIncident) && (
+      {message && (
         <p
-          className="rounded-md px-2 py-1.5 text-xs wrap-break-word"
-          style={{
-            background:
-              status === 'down' ? 'var(--status-down-soft)' : 'var(--status-degraded-soft)',
-            color: status === 'down' ? 'var(--status-down)' : 'var(--status-degraded)',
-          }}
+          className="rounded-md px-3 py-2 font-mono text-xs wrap-break-word"
+          style={{ background: STATUS_SOFT[status], color: STATUS_COLOR[status] }}
         >
-          {openIncident?.last_error ?? latest?.error}
+          {message}
         </p>
       )}
     </article>
+  )
+}
+
+/** Compact row used in the mobile "Operational" list. The whole row is the link. */
+export function SiteRow({ snapshot, now }: { snapshot: SiteSnapshot; now: number }) {
+  const { site, latest } = snapshot
+  const status = displayStatusOf(latest, now)
+
+  return (
+    <Link
+      href={`/sites/${site.slug}`}
+      className="flex items-center gap-3 px-4 py-3 hover:bg-(--surface-raised)"
+    >
+      <StatusDot status={status} size={12} />
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">{site.name}</span>
+      <span className="font-mono text-xs text-(--text-secondary)">
+        {formatMs(latest?.response_ms)}
+      </span>
+      <ChevronRight size={16} aria-hidden="true" className="text-(--text-muted)" />
+    </Link>
   )
 }

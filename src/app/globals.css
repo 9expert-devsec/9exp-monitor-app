@@ -32,81 +32,59 @@
 }
 
 @theme {
-  /* 9Expert brand palette — Navy / Blue / Lime */
-  --color-navy-950: #060f24;
-  --color-navy-900: #0a1834;
-  --color-navy-800: #10275a;
-  --color-navy-700: #17356f;
-  --color-navy-600: #1f4489;
-  --color-navy-100: #dfe6f4;
-  --color-navy-50: #f2f5fb;
-
-  --color-brand-blue: #1e6fd9;
-  --color-brand-blue-dark: #1558b0;
-  --color-brand-blue-light: #6aa5ef;
-
-  --color-brand-lime: #a6ce39;
-  --color-brand-lime-dark: #7fa522;
-  --color-brand-lime-light: #cbe57f;
-
   --font-sans: "LINE Seed Sans TH", "Noto Sans Thai", "IBM Plex Sans Thai",
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, monospace;
+
+  /* Radii — rounded-sm / rounded-md / rounded-lg / rounded-pill */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
 }
 
+/*
+ * One dark theme, from the 2026 9Expert CI. Components read these through
+ * Tailwind's arbitrary-variable syntax, e.g. `bg-(--surface-card)`.
+ */
 :root {
-  --surface-page: #f2f5fb;
-  --surface-card: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-sunken: #e7edf7;
-  --border-subtle: #d3ddee;
-  --border-strong: #b3c2dd;
-  --text-primary: #0a1834;
-  --text-secondary: #4a5b7c;
+  --brand-nine-blue: #2486ff;
+  --brand-action-blue: #005cff;
+  --brand-air-blue: #48b0ff;
+  /* Primary button and CTA only. */
+  --brand-signal-lime: #d4f73f;
+  --brand-cloud-base: #f8fafd;
+
+  --surface-page: #08131f;
+  --surface-card: #0d1b2a;
+  --surface-raised: #13263b;
+  --surface-sunken: #060e18;
+
+  --border-subtle: #1c3350;
+  --border-strong: #2b4a70;
+
+  --text-primary: #f8fafd;
+  --text-secondary: #a9bbd3;
   --text-muted: #7286a5;
+  --text-on-lime: #0d1b2a;
 
   /*
    * Status colours. Hue is never the only signal — <StatusDot> pairs each
    * status with a distinct shape (disc / triangle / square / hollow diamond)
    * and every status also carries a text label.
    */
-  --status-up: #2f9e44;
-  --status-degraded: #d98200;
-  --status-down: #d13438;
-  --status-stale: #8494ac;
-
-  --status-up-soft: #e5f5e9;
-  --status-degraded-soft: #fdf1de;
-  --status-down-soft: #fbe6e7;
-  --status-stale-soft: #e9edf3;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --surface-page: #060f24;
-    --surface-card: #0d1c3c;
-    --surface-raised: #142a53;
-    --surface-sunken: #0a1834;
-    --border-subtle: #1e3767;
-    --border-strong: #2c4a80;
-    --text-primary: #eef3fb;
-    --text-secondary: #a8bad6;
-    --text-muted: #7286a5;
-
-    --status-up: #4fc46a;
-    --status-degraded: #f0a33c;
-    --status-down: #ff6b70;
-    --status-stale: #7286a5;
-
-    --status-up-soft: #123320;
-    --status-degraded-soft: #3a2a10;
-    --status-down-soft: #3d1719;
-    --status-stale-soft: #16233d;
-  }
+  --status-up: #4fc46a;
+  --status-up-soft: #12301f;
+  --status-degraded: #f0a33c;
+  --status-degraded-soft: #33250f;
+  --status-down: #ff6b70;
+  --status-down-soft: #3a1519;
+  --status-stale: #7286a5;
+  --status-stale-soft: #16233a;
 }
 
 html {
-  color-scheme: light dark;
+  color-scheme: dark;
 }
 
 body {
@@ -116,11 +94,27 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Focus ring that stays visible on both the navy and light surfaces. */
 :focus-visible {
-  outline: 2px solid var(--color-brand-blue-light);
+  outline: 2px solid var(--brand-air-blue);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Overline: small uppercase label above a value or a section. */
+.overline {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Horizontally scrollable rows (mobile filter chips) without a visible bar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

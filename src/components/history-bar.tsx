@@ -2,7 +2,7 @@ import { formatDay, formatMs } from '@/lib/format'
 import { STATUS_COLOR } from '@/lib/status'
 import type { DayBucket } from '@/lib/types'
 
-const NO_DATA_COLOR = 'var(--surface-sunken)'
+const NO_DATA_COLOR = 'var(--border-subtle)'
 
 function tooltipFor(bucket: DayBucket): string {
   const total = bucket.up + bucket.degraded + bucket.down
@@ -17,14 +17,17 @@ function tooltipFor(bucket: DayBucket): string {
 }
 
 /**
- * 90 thin vertical bars, oldest on the left, coloured by the worst status seen
- * that day. Days with no data are drawn as an empty slot rather than skipped so
- * the bar always spans exactly 90 days and gaps in coverage stay visible.
+ * 90 equal bars, oldest on the left, coloured by the worst status seen that
+ * day. Days with no data are drawn as an empty slot rather than skipped so the
+ * bar always spans exactly 90 days and gaps in coverage stay visible.
+ *
+ * Height is 28 on cards and 40 on the detail page.
  */
-export function HistoryBar({ history }: { history: DayBucket[] }) {
+export function HistoryBar({ history, height = 28 }: { history: DayBucket[]; height?: number }) {
   return (
     <div
-      className="flex h-8 items-stretch gap-px overflow-hidden rounded-sm"
+      className="flex items-stretch gap-[2px]"
+      style={{ height }}
       role="img"
       aria-label={`Daily status for the last ${history.length} days`}
     >
@@ -32,7 +35,7 @@ export function HistoryBar({ history }: { history: DayBucket[] }) {
         <div
           key={bucket.day}
           title={tooltipFor(bucket)}
-          className="min-w-px flex-1 rounded-[1px] transition-opacity hover:opacity-70"
+          className="min-w-px flex-1 rounded-[2px] transition-opacity hover:opacity-70"
           style={{
             background: bucket.worst ? STATUS_COLOR[bucket.worst] : NO_DATA_COLOR,
           }}

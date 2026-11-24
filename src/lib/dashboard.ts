@@ -171,10 +171,24 @@ export interface SeriesPoint {
   down_count: number
 }
 
+/** One row of the "Recent checks" table — the payload is left out on purpose. */
+export type RecentCheck = Pick<
+  HealthCheck,
+  'id' | 'checked_at' | 'status' | 'http_status' | 'response_ms' | 'error'
+>
+
+export const RECENT_CHECKS_LIMIT = 10
+
 export interface SiteDetail {
   snapshot: SiteSnapshot
   series: SeriesPoint[]
   incidents: Incident[]
+  /** Incidents that started in the last 30 days. */
+  incidents30d: number
+  /** Newest first, at most RECENT_CHECKS_LIMIT rows. */
+  recentChecks: RecentCheck[]
+  /** 0–100 over the full 90-day history, or null without data. */
+  uptime90d: number | null
   range: DetailRange
   /** Server clock at load time, so the page renders without an impure call. */
   now: number
@@ -200,9 +214,19 @@ export async function getSiteDetail(
   const { hours, bucketMinutes } = RANGE_CONFIG[range]
   const since = new Date(Date.now() - hours * 3_600_000).toISOString()
   const historyFloor = recentDayKeys(HISTORY_DAYS)[0]
+  const incidentWindowStart = new Date(
+    Date.now() - UPTIME_WINDOW_DAYS * 86_400_000,
+  ).toISOString()
 
-  const [latestResult, statsResult, rollupsResult, seriesResult, incidentsResult] =
-    await Promise.all([
+  const [
+    latestResult,
+    statsResult,
+    rollupsResult,
+    seriesResult,
+    incidentsResult,
+    incidentCountResult,
+    recentChecksResult,
+  ] = await Promise.all([
       supabase
         .from('latest_health_checks')
         .select('*')
@@ -233,6 +257,19 @@ export async function getSiteDetail(
         .order('started_at', { ascending: false })
         .limit(50)
         .returns<Incident[]>(),
+      // Counted separately so the tile is right even past the 50-row list cap.
+      supabase
+        .from('incidents')
+        .select('id', { count: 'exact', head: true })
+        .eq('site_id', site.id)
+        .gte('started_at', incidentWindowStart),
+      supabase
+        .from('health_checks')
+        .select('id, checked_at, status, http_status, response_ms, error')
+        .eq('site_id', site.id)
+        .order('checked_at', { ascending: false })
+        .limit(RECENT_CHECKS_LIMIT)
+        .returns<RecentCheck[]>(),
     ])
 
   const failure = [
@@ -241,6 +278,8 @@ export async function getSiteDetail(
     rollupsResult,
     seriesResult,
     incidentsResult,
+    incidentCountResult,
+    recentChecksResult,
   ].find((result) => result.error)
 
   if (failure?.error) {
@@ -261,6 +300,9 @@ export async function getSiteDetail(
     },
     series: (seriesResult.data as SeriesPoint[] | null) ?? [],
     incidents,
+    incidents30d: incidentCountResult.count ?? 0,
+    recentChecks: recentChecksResult.data ?? [],
+    uptime90d: computeUptime(history, HISTORY_DAYS),
     range,
     now: Date.now(),
   }
