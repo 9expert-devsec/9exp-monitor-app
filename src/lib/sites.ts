@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { compareSites } from '@/lib/site-order'
 import { displayStatusOf } from '@/lib/status'
 import { serviceClient } from '@/lib/supabase/server'
 import type { DisplayStatus, HealthCheck, Site } from '@/lib/types'
@@ -8,12 +9,6 @@ export interface SiteListRow {
   site: Site
   /** Latest-check status; ignored in the UI for paused sites. */
   status: DisplayStatus
-}
-
-/** Group, then name — the order of the Sites table and the dashboard. */
-export function compareSites(a: Site, b: Site): number {
-  const group = (a.group_name ?? '￿').localeCompare(b.group_name ?? '￿')
-  return group !== 0 ? group : a.name.localeCompare(b.name)
 }
 
 /** Every site, paused ones included, with its latest status. */

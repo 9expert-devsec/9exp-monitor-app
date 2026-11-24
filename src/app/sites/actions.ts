@@ -9,6 +9,7 @@ import {
   slowPageMessage,
 } from '@/lib/messages'
 import { checkSite } from '@/lib/probe'
+import { bottomSortOrder } from '@/lib/site-order'
 import { authorizeAction } from '@/lib/session'
 import {
   SITE_GROUPS,
@@ -78,12 +79,16 @@ export async function createSiteAction(formData: FormData): Promise<SaveSiteResu
   }
 
   const admin = serviceClient()
-  const { data: slugRows, error: slugError } = await admin
+  const { data: existingRows, error: slugError } = await admin
     .from('monitored_sites')
-    .select('slug')
-    .returns<{ slug: string }[]>()
+    .select('slug, group_name, sort_order')
+    .returns<Pick<Site, 'slug' | 'group_name' | 'sort_order'>[]>()
   if (slugError) return { ok: false, error: slugError.message, fieldErrors: {} }
-  const taken = new Set((slugRows ?? []).map((row) => row.slug))
+  const taken = new Set((existingRows ?? []).map((row) => row.slug))
+  // New sites land at the bottom of their group.
+  const sort_order = bottomSortOrder(
+    (existingRows ?? []).filter((row) => row.group_name === input.group_name).map((row) => row.sort_order),
+  )
 
   // Retry on a slug race with a concurrent create; the URL race maps to the field error.
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -91,6 +96,7 @@ export async function createSiteAction(formData: FormData): Promise<SaveSiteResu
     const { error } = await admin.from('monitored_sites').insert({
       ...input,
       slug,
+      sort_order,
       created_by: caller.userId,
     })
 
@@ -137,10 +143,23 @@ export async function updateSiteAction(formData: FormData): Promise<SaveSiteResu
     return { ok: false, error: null, fieldErrors: { url: URL_ALREADY_USED_MESSAGE } }
   }
 
+  // Moving to another group puts the site at the bottom of that group.
+  let sortOrder = existing.sort_order
+  if (input.group_name !== existing.group_name) {
+    const { data: groupRows, error: groupError } = await admin
+      .from('monitored_sites')
+      .select('sort_order')
+      .eq('group_name', input.group_name)
+      .neq('id', existing.id)
+      .returns<{ sort_order: number }[]>()
+    if (groupError) return { ok: false, error: groupError.message, fieldErrors: {} }
+    sortOrder = bottomSortOrder((groupRows ?? []).map((row) => row.sort_order))
+  }
+
   // The slug is never changed on rename, so detail URLs stay stable.
   const { error } = await admin
     .from('monitored_sites')
-    .update({ ...input, updated_at: new Date().toISOString() })
+    .update({ ...input, sort_order: sortOrder, updated_at: new Date().toISOString() })
     .eq('id', existing.id)
 
   if (error) {
@@ -174,6 +193,76 @@ export async function setSiteEnabledAction(id: string, enabled: boolean): Promis
   if (!data) return { ok: false, error: 'That site no longer exists.' }
 
   revalidateSites(data.slug)
+  return { ok: true }
+}
+
+// --- Reorder -----------------------------------------------------------------
+
+export interface GroupOrder {
+  /** The group as stored (`group_name`); null for sites without one. */
+  group: string | null
+  /** Every site id in that group, in the new order. */
+  ids: string[]
+}
+
+/**
+ * Saves the manual order of one or more groups in a single upsert. Each group
+ * must list exactly the sites that are in it — no more, no fewer, no
+ * duplicates — so a stale or forged request cannot move a site across groups.
+ * Orders are rewritten as 10, 20, 30, … per group.
+ */
+export async function saveSiteOrderAction(groups: GroupOrder[]): Promise<SimpleResult> {
+  const caller = await authorizeAction({ admin: true })
+  if (!caller) return { ok: false, error: NOT_ALLOWED }
+  if (!Array.isArray(groups) || groups.length === 0) return { ok: true }
+
+  const admin = serviceClient()
+  // slug, name and url are NOT NULL, so the upsert's insert half needs them;
+  // the conflict on `id` makes it an update of `sort_order` (and these same values).
+  const { data: sites, error } = await admin
+    .from('monitored_sites')
+    .select('id, slug, name, url, group_name')
+    .returns<Pick<Site, 'id' | 'slug' | 'name' | 'url' | 'group_name'>[]>()
+  if (error) return { ok: false, error: error.message }
+
+  const byId = new Map((sites ?? []).map((site) => [site.id, site]))
+  const now = new Date().toISOString()
+  const rows: (Pick<Site, 'id' | 'slug' | 'name' | 'url' | 'sort_order'> & { updated_at: string })[] = []
+  const seenGroups = new Set<string>()
+
+  for (const { group, ids } of groups) {
+    const groupKey = group ?? ' none'
+    if (seenGroups.has(groupKey)) return { ok: false, error: 'A group was sent twice.' }
+    seenGroups.add(groupKey)
+
+    const expected = (sites ?? []).filter((site) => site.group_name === group).map((site) => site.id)
+    const unique = new Set(ids)
+    if (
+      !Array.isArray(ids) ||
+      unique.size !== ids.length ||
+      ids.length !== expected.length ||
+      !expected.every((id) => unique.has(id))
+    ) {
+      return { ok: false, error: 'The site list changed meanwhile. Cancel and try again.' }
+    }
+
+    ids.forEach((id, index) => {
+      const site = byId.get(id)!
+      rows.push({
+        id,
+        slug: site.slug,
+        name: site.name,
+        url: site.url,
+        sort_order: (index + 1) * 10,
+        updated_at: now,
+      })
+    })
+  }
+
+  const { error: saveError } = await admin.from('monitored_sites').upsert(rows, { onConflict: 'id' })
+  if (saveError) return { ok: false, error: saveError.message }
+
+  revalidateSites()
   return { ok: true }
 }
 

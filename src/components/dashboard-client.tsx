@@ -10,7 +10,7 @@ import { KpiTile } from '@/components/kpi-tile'
 import { OverallStatusCard, type StatusCounts } from '@/components/overall-status-card'
 import { SiteCard, SiteRow } from '@/components/site-card'
 import { rollupDayKey } from '@/lib/format'
-import { SEVERITY, displayStatusOf, statusOfDay } from '@/lib/status'
+import { displayStatusOf, statusOfDay } from '@/lib/status'
 import { realtimeClient } from '@/lib/supabase/browser'
 import type { DayBucket, DisplayStatus, HealthCheck, Incident, SiteSnapshot } from '@/lib/types'
 
@@ -20,7 +20,10 @@ export interface RealtimeConfig {
 }
 
 interface Props {
+  /** Enabled sites, already in display order (group, then manual order). */
   snapshots: SiteSnapshot[]
+  /** All sites including paused ones, for the empty state. */
+  totalSites: number
   lastRunAt: string | null
   realtime: RealtimeConfig | null
   /**
@@ -68,13 +71,6 @@ interface Entry {
   status: DisplayStatus
 }
 
-/** Down, degraded, stale, then up; then by name. */
-function compareEntries(a: Entry, b: Entry): number {
-  const bySeverity = SEVERITY[b.status] - SEVERITY[a.status]
-  if (bySeverity !== 0) return bySeverity
-  return a.snapshot.site.name.localeCompare(b.snapshot.site.name)
-}
-
 /**
  * The dashboard, live.
  *
@@ -87,7 +83,14 @@ function compareEntries(a: Entry, b: Entry): number {
  * The filter tab and search query live in the URL (`?filter=issues&q=…`) and
  * are derived from it on every render — never mirrored into state.
  */
-export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow, canAddSites }: Props) {
+export function DashboardClient({
+  snapshots,
+  totalSites,
+  lastRunAt,
+  realtime,
+  serverNow,
+  canAddSites,
+}: Props) {
   const [liveChecks, setLiveChecks] = useState<Map<string, HealthCheck>>(() => new Map())
   const [liveIncidents, setLiveIncidents] = useState<Map<string, Incident>>(() => new Map())
   const [now, setNow] = useState(() => Date.parse(serverNow))
@@ -186,7 +189,7 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow, can
   const counts: StatusCounts = { up: 0, degraded: 0, down: 0, stale: 0 }
   for (const entry of entries) counts[entry.status] += 1
 
-  // Group names in the order the server sent them (group, then name).
+  // Group names in the order the server sent them (fixed group order).
   const groupNames: string[] = []
   for (const entry of entries) {
     const group = groupOf(entry.snapshot)
@@ -206,6 +209,8 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow, can
   const activeFilter = tabs.some((tab) => tab.key === filter) ? filter : 'all'
 
   const needle = query.trim().toLowerCase()
+  // No re-sort: cards keep the admin's manual order within each group. Problems
+  // are one click away under the "Issues" tab.
   const visible = entries
     .filter((entry) => {
       if (activeFilter === 'issues') return entry.status !== 'up'
@@ -217,7 +222,6 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow, can
       const { name, url } = entry.snapshot.site
       return name.toLowerCase().includes(needle) || url.toLowerCase().includes(needle)
     })
-    .sort(compareEntries)
 
   const sections = groupNames
     .map((group) => ({
@@ -260,11 +264,24 @@ export function DashboardClient({ snapshots, lastRunAt, realtime, serverNow, can
 
       {entries.length === 0 ? (
         <div className="flex flex-col items-start gap-4 rounded-lg border border-(--border-subtle) bg-(--surface-card) p-6 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-(--text-secondary)">No sites yet.</p>
-          {canAddSites && (
-            <Link href="/sites?new=1" className={buttonClassName('primary')}>
-              Add site
-            </Link>
+          {totalSites > 0 ? (
+            <>
+              <p className="text-sm text-(--text-secondary)">All sites are paused.</p>
+              {canAddSites && (
+                <Link href="/sites" className={buttonClassName('secondary')}>
+                  Manage sites
+                </Link>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-(--text-secondary)">No sites yet.</p>
+              {canAddSites && (
+                <Link href="/sites?new=1" className={buttonClassName('primary')}>
+                  Add site
+                </Link>
+              )}
+            </>
           )}
         </div>
       ) : (

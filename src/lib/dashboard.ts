@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { rollupDayKey } from '@/lib/format'
+import { compareSites } from '@/lib/site-order'
 import { statusOfDay, uptimePercent } from '@/lib/status'
 import { serviceClient } from '@/lib/supabase/server'
 import type {
@@ -58,6 +59,8 @@ function computeUptime(history: DayBucket[], windowDays: number): number | null 
 
 export interface DashboardData {
   snapshots: SiteSnapshot[]
+  /** Every site in the registry, paused ones included (tells "none yet" from "all paused"). */
+  totalSites: number
   /** Newest `checked_at` across all sites — i.e. when the last run completed. */
   lastRunAt: string | null
   /**
@@ -76,14 +79,12 @@ export async function getDashboardData(): Promise<DashboardData> {
   const supabase = serviceClient()
   const historyFloor = recentDayKeys(HISTORY_DAYS)[0]
 
-  const [sitesResult, latestResult, statsResult, rollupsResult, incidentsResult] =
+  const [sitesResult, latestResult, statsResult, rollupsResult, incidentsResult, totalResult] =
     await Promise.all([
       supabase
         .from('monitored_sites')
         .select('*')
         .eq('enabled', true)
-        .order('group_name', { ascending: true })
-        .order('name', { ascending: true })
         .returns<Site[]>(),
       supabase
         .from('latest_health_checks')
@@ -103,6 +104,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         .select('*')
         .is('resolved_at', null)
         .returns<Incident[]>(),
+      supabase.from('monitored_sites').select('id', { count: 'exact', head: true }),
     ])
 
   const failure = [
@@ -111,13 +113,15 @@ export async function getDashboardData(): Promise<DashboardData> {
     statsResult,
     rollupsResult,
     incidentsResult,
+    totalResult,
   ].find((result) => result.error)
 
   if (failure?.error) {
     throw new Error(`Could not load dashboard data: ${failure.error.message}`)
   }
 
-  const sites = sitesResult.data ?? []
+  // Group order, then the admin's manual order (Sites → Reorder), then name.
+  const sites = (sitesResult.data ?? []).slice().sort(compareSites)
   const latestBySite = new Map((latestResult.data ?? []).map((row) => [row.site_id, row]))
   const avgBySite = new Map(
     (statsResult.data ?? []).map((row) => [row.site_id, row.avg_response_ms]),
@@ -151,7 +155,12 @@ export async function getDashboardData(): Promise<DashboardData> {
     return !newest || checkedAt > newest ? checkedAt : newest
   }, null)
 
-  return { snapshots, lastRunAt, renderedAt: new Date().toISOString() }
+  return {
+    snapshots,
+    totalSites: totalResult.count ?? sites.length,
+    lastRunAt,
+    renderedAt: new Date().toISOString(),
+  }
 }
 
 export type DetailRange = '24h' | '7d' | '30d'

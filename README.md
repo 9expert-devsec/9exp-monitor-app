@@ -108,6 +108,11 @@ The database is the only source of truth; there is no config file or seed
 script. The slug (the `/sites/<slug>` URL) is generated from the name on create
 and never changes on rename.
 
+**Order:** groups are always `In-house`, then `Outsourced`, then any others A→Z.
+Within a group, admins set the order with **Reorder** on the Sites page (drag
+rows, or use the arrow buttons); the dashboard and the Sites table both follow
+it. New sites, and sites moved to another group, go to the bottom of the group.
+
 **Pausing** a site (the toggle, or *Monitoring enabled* in the drawer) stops
 checks but keeps its history. **Deleting** a site removes its whole history
 permanently.

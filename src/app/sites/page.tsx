@@ -1,9 +1,7 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 
 import { SiteDrawer } from '@/app/sites/site-drawer'
 import { SitesTable } from '@/app/sites/sites-table'
-import { buttonClassName } from '@/components/button'
 import { requirePageSession } from '@/lib/session'
 import { listSites } from '@/lib/sites'
 
@@ -14,7 +12,7 @@ function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? '' : 's'}`
 }
 
-/** Everyone signed in sees the list; only admins get the toggles, Edit and Add. */
+/** Everyone signed in sees the list; only admins get the toggles, Edit, Add and Reorder. */
 export default async function SitesPage() {
   const session = await requirePageSession()
   const isAdmin = session.profile.role === 'admin'
@@ -25,22 +23,19 @@ export default async function SitesPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-360 flex-col gap-6 px-4 py-6 sm:p-12">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-[28px] leading-tight font-bold">Monitored sites</h1>
-          <p className="mt-1 text-sm text-(--text-secondary)">
-            {plural(rows.length, 'site')} · {active} active · {paused} paused — every site gets a page
-            check; health check is optional
-          </p>
-        </div>
-        {isAdmin && (
-          <Link href="/sites?new=1" scroll={false} className={buttonClassName('primary')}>
-            + Add site
-          </Link>
-        )}
-      </div>
-
-      <SitesTable rows={rows} isAdmin={isAdmin} />
+      <SitesTable
+        rows={rows}
+        isAdmin={isAdmin}
+        heading={
+          <>
+            <h1 className="text-[28px] leading-tight font-bold">Monitored sites</h1>
+            <p className="mt-1 text-sm text-(--text-secondary)">
+              {plural(rows.length, 'site')} · {active} active · {paused} paused — every site gets a
+              page check; health check is optional
+            </p>
+          </>
+        }
+      />
 
       {isAdmin && <SiteDrawer sites={rows.map((row) => row.site)} />}
     </main>
