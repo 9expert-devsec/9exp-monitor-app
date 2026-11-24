@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useState, useTransition, type FormEvent } from 'react'
 
 import {
+  changeEmailAction,
   resetPasswordAction,
   updateAccountAction,
   type ResetPasswordResult,
@@ -13,6 +14,7 @@ import { Button } from '@/components/button'
 import { CopyButton } from '@/components/copy-button'
 import { Field, INPUT_CLASS } from '@/components/field'
 import { Modal } from '@/components/modal'
+import { toast } from '@/components/toaster'
 import { formatShortDateTime } from '@/lib/format'
 import type { Role } from '@/lib/session'
 import type { UserRow } from '@/lib/users'
@@ -44,6 +46,7 @@ function StatusPill({ disabled }: { disabled: boolean }) {
 type Dialog =
   | { kind: 'reset'; user: UserRow; result: ResetPasswordResult | null }
   | { kind: 'edit'; user: UserRow }
+  | { kind: 'email'; user: UserRow }
   | null
 
 export function UsersTable({ users, currentUserId }: { users: UserRow[]; currentUserId: string }) {
@@ -102,6 +105,13 @@ export function UsersTable({ users, currentUserId }: { users: UserRow[]; current
                     <Button
                       variant="ghost"
                       className="px-2.5 py-1.5"
+                      onClick={() => setDialog({ kind: 'email', user })}
+                    >
+                      Change email
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="px-2.5 py-1.5"
                       onClick={() => setDialog({ kind: 'edit', user })}
                     >
                       Edit
@@ -119,6 +129,13 @@ export function UsersTable({ users, currentUserId }: { users: UserRow[]; current
           user={dialog.user}
           result={dialog.result}
           onResult={(result) => setDialog({ ...dialog, result })}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'email' && (
+        <ChangeEmailDialog
+          user={dialog.user}
+          isSelf={dialog.user.id === currentUserId}
           onClose={() => setDialog(null)}
         />
       )}
@@ -307,6 +324,97 @@ function EditAccountDialog({
               {pending ? 'Saving…' : 'Save'}
             </Button>
           </div>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/** New sign-in email, confirmed immediately (no mail). Warns when it is your own. */
+function ChangeEmailDialog({
+  user,
+  isSelf,
+  onClose,
+}: {
+  user: UserRow
+  isSelf: boolean
+  onClose: () => void
+}) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [identityWarning, setIdentityWarning] = useState<string | null>(null)
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError(null)
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Enter a valid email.')
+      return
+    }
+    startTransition(async () => {
+      const result = await changeEmailAction(user.id, email)
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      router.refresh()
+      if (result.identityMismatch) {
+        // Keep the dialog open: this needs an admin's attention.
+        setIdentityWarning(
+          `Sign-in email is now ${result.email}, but the email identity still says ${result.identityEmail}. Check this account before relying on the new address.`,
+        )
+        return
+      }
+      toast(
+        result.self
+          ? `Your email is now ${result.email}. Use it next time you sign in.`
+          : `Email changed to ${result.email}`,
+      )
+      onClose()
+    })
+  }
+
+  return (
+    <Modal title="Change email" onClose={onClose}>
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <p className="text-sm text-(--text-secondary)">
+          Current: <span className="font-mono text-(--text-primary)">{user.email}</span>. The new
+          address works immediately — no confirmation mail is sent.
+        </p>
+        {isSelf && (
+          <p className="rounded-md bg-(--status-degraded-soft) px-3 py-2.5 text-sm text-(--status-degraded)">
+            This is your own account. You will sign in with the new email next time.
+          </p>
+        )}
+        <Field label="New email" htmlFor="change-email" error={error} errorId="change-email-error">
+          <input
+            id="change-email"
+            type="email"
+            autoComplete="off"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            required
+            className={INPUT_CLASS}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'change-email-error' : undefined}
+          />
+        </Field>
+        {identityWarning && (
+          <p role="alert" className="rounded-md bg-(--status-down-soft) px-3 py-2.5 text-sm text-(--status-down)">
+            {identityWarning}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            {identityWarning ? 'Close' : 'Cancel'}
+          </Button>
+          {!identityWarning && (
+            <Button type="submit" variant="primary" disabled={pending}>
+              {pending ? 'Saving…' : 'Change email'}
+            </Button>
+          )}
         </div>
       </form>
     </Modal>

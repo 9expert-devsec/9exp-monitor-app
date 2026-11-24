@@ -95,12 +95,12 @@ export const config = {
   matcher: [
     /*
      * Everything except:
-     * - /api/checks/run, /api/checks/prune — CRON_SECRET auth, unchanged
+     * - /api/checks/run, /api/checks/prune, /api/cron/watchdog — CRON_SECRET auth
      * - /_next/static, /_next/image       — build output
      * - /icon.png, /apple-icon.png        — favicon and touch icon
      * - /logo.png                         — the login card's logo
      * - /fonts/*                          — the brand font the login page uses
      */
-    '/((?!api/checks/run|api/checks/prune|_next/static|_next/image|icon\\.png|apple-icon\\.png|logo\\.png|fonts/).*)',
+    '/((?!api/checks/run|api/checks/prune|api/cron/watchdog|_next/static|_next/image|icon\\.png|apple-icon\\.png|logo\\.png|fonts/).*)',
   ],
 }

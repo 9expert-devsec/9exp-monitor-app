@@ -1,9 +1,10 @@
 import 'server-only'
 
-import { getNotifier, notifySafely } from '@/lib/notifier'
+import { notifyAfterCheck } from '@/lib/notify/engine'
+import { loadNotificationSettings, type NotificationSettings } from '@/lib/notify/slack'
 import { checkSite, type SiteCheck } from '@/lib/probe'
 import { serviceClient } from '@/lib/supabase/server'
-import type { CheckStatus, Incident, RunSummary, Site } from '@/lib/types'
+import type { CheckStatus, RunSummary, Site } from '@/lib/types'
 
 /**
  * Hard ceiling for the whole run. Worst case for one site is a page check with
@@ -25,7 +26,11 @@ interface RecordOutcome {
   incident_http_status: number | null
 }
 
-async function recordAndNotify(site: Site, check: SiteCheck): Promise<void> {
+async function recordAndNotify(
+  site: Site,
+  check: SiteCheck,
+  settings: NotificationSettings | null,
+): Promise<void> {
   const supabase = serviceClient()
 
   // `record_health_check` returns a composite type, so PostgREST hands back a
@@ -47,29 +52,9 @@ async function recordAndNotify(site: Site, check: SiteCheck): Promise<void> {
   }
 
   const outcome = data as RecordOutcome | null
-  if (!outcome?.incident_event || outcome.incident_id === null) return
 
-  const incident: Incident = {
-    id: outcome.incident_id,
-    site_id: site.id,
-    started_at: outcome.incident_started_at ?? new Date().toISOString(),
-    resolved_at: outcome.incident_resolved_at,
-    last_error: outcome.incident_last_error,
-    http_status: outcome.incident_http_status,
-  }
-
-  const notifier = getNotifier()
-  if (outcome.incident_event === 'opened') {
-    await notifySafely(
-      () => notifier.onIncidentOpened(site, incident),
-      `onIncidentOpened(${site.slug})`,
-    )
-  } else {
-    await notifySafely(
-      () => notifier.onIncidentResolved(site, incident),
-      `onIncidentResolved(${site.slug})`,
-    )
-  }
+  // Slack: decided from the recorded transition. Never throws into the run.
+  await notifyAfterCheck(settings, site, check, outcome)
 }
 
 /**
@@ -92,6 +77,9 @@ export async function runChecks(): Promise<RunSummary> {
     throw new Error(`Could not load monitored sites: ${error.message}`)
   }
 
+  // Read once per run; null (e.g. migration not applied) simply means no Slack.
+  const settings = await loadNotificationSettings()
+
   const deadline = new AbortController()
   const deadlineTimer = setTimeout(
     () => deadline.abort(new DOMException('Run deadline reached', 'AbortError')),
@@ -104,7 +92,7 @@ export async function runChecks(): Promise<RunSummary> {
     const results = await Promise.allSettled(
       (sites ?? []).map(async (site) => {
         const check = await checkSite(site, deadline.signal)
-        await recordAndNotify(site, check)
+        await recordAndNotify(site, check, settings)
         return check.status
       }),
     )

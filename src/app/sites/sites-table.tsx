@@ -15,6 +15,7 @@ import { saveSiteOrderAction, setSiteEnabledAction, type GroupOrder } from '@/ap
 import { Button, buttonClassName } from '@/components/button'
 import { StatusPill } from '@/components/status-pill'
 import { Switch } from '@/components/switch'
+import { toast } from '@/components/toaster'
 import { hostOf } from '@/lib/format'
 import { healthPathLabel } from '@/lib/site-form'
 import type { DisplayStatus, Site } from '@/lib/types'
@@ -185,8 +186,10 @@ export function SitesTable({
     setError(null)
     startSave(async () => {
       const result = await saveSiteOrderAction(changes)
-      // On success the action's revalidation refreshes `rows`; leave reorder mode.
-      if (result.ok) setStaged(null)
+      // Either way the action revalidated, so `rows` is the real saved order:
+      // leave reorder mode and show it (with the error, if any).
+      setStaged(null)
+      if (result.ok) toast('Order saved')
       else setError(`Could not save the order: ${result.error}`)
     })
   }

@@ -52,6 +52,7 @@ supabase db push
 #   or: supabase/migrations/20260804090000_init_monitor.sql
 #       supabase/migrations/20261124120000_auth_profiles.sql
 #       supabase/migrations/20261124150000_sites_managed.sql
+#       supabase/migrations/20261124180000_notifications.sql
 
 # 2. Create the first admin (prints a temporary password once)
 npm run create-admin -- --email you@example.com --name "Your Name"
@@ -74,7 +75,7 @@ the first admin comes from `npm run create-admin`. Turn off
 **Authentication → Sign In / Providers → Allow new users to sign up** in the
 Supabase dashboard as well; the app never calls `signUp`.
 
-- **Roles:** `admin` manages users (and, later, sites and notifications);
+- **Roles:** `admin` manages users, sites and notifications;
   `viewer` is read-only but may press "Check now".
 - **Temporary passwords:** new accounts and resets get a generated
   16-character password, shown to the admin once. The user must set their own
@@ -251,13 +252,42 @@ in both Thai and Latin.
 
 ## Notifications
 
-`src/lib/notifier.ts` defines the `Notifier` interface. `NoopNotifier` is the
-only implementation today and is called from the incident transition logic in
-`src/lib/checker.ts`.
+Admins configure alerts on **Notifications** (`/notifications`). Today the
+channel is Slack, through an **Incoming Webhook**; on-screen alerts are always
+on; email is not built yet.
 
-To add Discord later: implement `Notifier`, return it from `getNotifier()`. No
-changes to the checker are needed. Failures inside a notifier are logged and
-swallowed — a broken webhook must never fail a run or lose a recorded check.
+- **Webhook URL** is a secret: it is stored in `notification_settings`, read only
+  on the server with the service role, shown masked on the page, and never
+  logged. The column is excluded from the `authenticated` grant. Only
+  `https://hooks.slack.com/…` URLs are accepted.
+- **Rules** (only for sites with *Alert when this site goes down* on):
+  - *Site goes down* — after the page check's retry confirms it.
+  - *Site recovers* — only for a down that was actually posted; includes the
+    total downtime. Not held back by quiet hours.
+  - *Degraded for more than N min* — once per continuous degraded spell.
+  - *Checker stopped* — no result for N+ min (see the watchdog below).
+- **Quiet hours** (Bangkok time, may cross midnight): incidents are recorded and
+  the delivery log says `suppressed_quiet`; a site still down after the override
+  minutes is posted once, marked "during quiet hours". A down that is still
+  unposted when quiet hours end is posted then.
+- **Exactly once:** each post is preceded by an atomic claim on the incident
+  (`notified_at`, `recover_notified_at`, …), and `notification_log` has a unique
+  index on sent `incident_key`s, so overlapping runs cannot post twice. A failed
+  post releases the claim; the next run retries.
+- **Never breaks a run:** Slack has a 5 s timeout and every error is caught and
+  logged to `notification_log`, not thrown into the checker.
+- Message text comes from `src/lib/notify/slack-message.ts`; the page's preview
+  renders the same model, so it cannot drift from what is sent. Links use
+  `APP_BASE_URL` (or Vercel's production domain).
+
+### Watchdog: "Checker stopped"
+
+`POST /api/cron/watchdog` (header `x-cron-secret: $CRON_SECRET`) posts once
+per stall when the newest check result is older than the configured minutes.
+It must be called by a scheduler that does **not** depend on the `monitor`
+GitHub Actions workflow — if Actions stops, a step inside it cannot notice.
+**Not wired yet.** Options: Supabase `pg_cron` + `pg_net`, Vercel Cron, or an
+external uptime/cron service, every 5 minutes.
 
 ---
 
@@ -326,7 +356,8 @@ Places where this deviates from, or resolves ambiguity in, the original spec:
    does the insert, the incident transition, and the rollup upsert in a single
    statement. A partial unique index guarantees at most one open incident per
    site, so two overlapping runs cannot both open one. The function returns
-   which transition occurred, and the notifier is invoked from TypeScript.
+   which transition occurred, and the Slack rules (`src/lib/notify/engine.ts`)
+   act on it from TypeScript.
 
 4. **"Check now" is a Server Action, not a session-authenticated route.** The
    action verifies the signed-in session itself (any enabled account, viewers

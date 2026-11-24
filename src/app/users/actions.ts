@@ -186,3 +186,73 @@ export async function updateAccountAction(formData: FormData): Promise<UpdateAcc
   revalidatePath('/users')
   return { ok: true }
 }
+
+// --- Change email --------------------------------------------------------------
+
+export type ChangeEmailResult =
+  | {
+      ok: true
+      /** `user.email` after the update, read back with getUserById. */
+      email: string
+      /** The `email` identity's `identity_data.email`, read back the same way. */
+      identityEmail: string | null
+      /** True when the identity did not follow the user's email. */
+      identityMismatch: boolean
+      self: boolean
+    }
+  | { ok: false; error: string; field: 'email' | null }
+
+/**
+ * Changes an account's sign-in email through the Auth admin API, confirmed
+ * immediately (accounts are admin-created; no confirmation mail is sent).
+ * `profiles` keeps no copy of the email, so nothing else needs updating.
+ * The result reports the identity's email too: if the admin API ever stops
+ * updating `auth.identities`, the UI says so instead of hiding it.
+ */
+export async function changeEmailAction(userId: string, rawEmail: string): Promise<ChangeEmailResult> {
+  const caller = await authorizeAction({ admin: true })
+  if (!caller) return { ok: false, error: NOT_ALLOWED, field: null }
+
+  const email = String(rawEmail ?? '').trim().toLowerCase()
+  if (!looksLikeEmail(email)) return { ok: false, error: 'Enter a valid email.', field: 'email' }
+
+  const admin = serviceClient()
+  const { data: current, error: currentError } = await admin.auth.admin.getUserById(userId)
+  if (currentError || !current.user) return { ok: false, error: 'That account no longer exists.', field: null }
+  if ((current.user.email ?? '').toLowerCase() === email) {
+    return { ok: false, error: 'That is already the email of this account.', field: 'email' }
+  }
+
+  // Duplicate check first, for a clear message; Auth's own uniqueness is the backstop.
+  const { data: list, error: listError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+  if (listError) return { ok: false, error: listError.message, field: null }
+  if (list.users.some((user) => user.id !== userId && (user.email ?? '').toLowerCase() === email)) {
+    return { ok: false, error: 'Another account already uses this email.', field: 'email' }
+  }
+
+  const { error } = await admin.auth.admin.updateUserById(userId, { email, email_confirm: true })
+  if (error) {
+    if (error.code === 'email_exists' || error.code === 'user_already_exists') {
+      return { ok: false, error: 'Another account already uses this email.', field: 'email' }
+    }
+    return { ok: false, error: error.message, field: null }
+  }
+
+  const { data: after, error: afterError } = await admin.auth.admin.getUserById(userId)
+  if (afterError || !after.user) {
+    return { ok: false, error: 'Email changed, but the account could not be re-read.', field: null }
+  }
+
+  const identity = after.user.identities?.find((item) => item.provider === 'email')
+  const identityEmail = typeof identity?.identity_data?.email === 'string' ? identity.identity_data.email : null
+  const userEmail = after.user.email ?? ''
+
+  revalidatePath('/users')
+  return {
+    ok: true,
+    email: userEmail,
+    identityEmail,
+    identityMismatch: identityEmail !== null && identityEmail.toLowerCase() !== userEmail.toLowerCase(),
+    self: userId === caller.userId,
+  }
+}

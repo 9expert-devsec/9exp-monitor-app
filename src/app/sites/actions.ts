@@ -206,10 +206,15 @@ export interface GroupOrder {
 }
 
 /**
- * Saves the manual order of one or more groups in a single upsert. Each group
- * must list exactly the sites that are in it — no more, no fewer, no
- * duplicates — so a stale or forged request cannot move a site across groups.
- * Orders are rewritten as 10, 20, 30, … per group.
+ * Saves the manual order of one or more groups. Each group must list exactly
+ * the sites that are in it — no more, no fewer, no duplicates — so a stale or
+ * forged request cannot move a site across groups. Orders become 10, 20, 30, …
+ * per group.
+ *
+ * Writes ONLY `sort_order`, one `update … where id = …` per site, and only for
+ * rows whose value actually changes — name, url, slug and updated_at are never
+ * touched (there is no updated_at trigger on monitored_sites). On any failure
+ * the paths are revalidated so the client re-fetches the real order.
  */
 export async function saveSiteOrderAction(groups: GroupOrder[]): Promise<SimpleResult> {
   const caller = await authorizeAction({ admin: true })
@@ -217,17 +222,14 @@ export async function saveSiteOrderAction(groups: GroupOrder[]): Promise<SimpleR
   if (!Array.isArray(groups) || groups.length === 0) return { ok: true }
 
   const admin = serviceClient()
-  // slug, name and url are NOT NULL, so the upsert's insert half needs them;
-  // the conflict on `id` makes it an update of `sort_order` (and these same values).
   const { data: sites, error } = await admin
     .from('monitored_sites')
-    .select('id, slug, name, url, group_name')
-    .returns<Pick<Site, 'id' | 'slug' | 'name' | 'url' | 'group_name'>[]>()
+    .select('id, group_name, sort_order')
+    .returns<Pick<Site, 'id' | 'group_name' | 'sort_order'>[]>()
   if (error) return { ok: false, error: error.message }
 
-  const byId = new Map((sites ?? []).map((site) => [site.id, site]))
-  const now = new Date().toISOString()
-  const rows: (Pick<Site, 'id' | 'slug' | 'name' | 'url' | 'sort_order'> & { updated_at: string })[] = []
+  const current = new Map((sites ?? []).map((site) => [site.id, site.sort_order]))
+  const changes: { id: string; sort_order: number }[] = []
   const seenGroups = new Set<string>()
 
   for (const { group, ids } of groups) {
@@ -243,24 +245,26 @@ export async function saveSiteOrderAction(groups: GroupOrder[]): Promise<SimpleR
       ids.length !== expected.length ||
       !expected.every((id) => unique.has(id))
     ) {
-      return { ok: false, error: 'The site list changed meanwhile. Cancel and try again.' }
+      revalidateSites()
+      return { ok: false, error: 'The site list changed meanwhile. The current order has been reloaded.' }
     }
 
     ids.forEach((id, index) => {
-      const site = byId.get(id)!
-      rows.push({
-        id,
-        slug: site.slug,
-        name: site.name,
-        url: site.url,
-        sort_order: (index + 1) * 10,
-        updated_at: now,
-      })
+      const sortOrder = (index + 1) * 10
+      if (current.get(id) !== sortOrder) changes.push({ id, sort_order: sortOrder })
     })
   }
 
-  const { error: saveError } = await admin.from('monitored_sites').upsert(rows, { onConflict: 'id' })
-  if (saveError) return { ok: false, error: saveError.message }
+  for (const change of changes) {
+    const { error: updateError } = await admin
+      .from('monitored_sites')
+      .update({ sort_order: change.sort_order })
+      .eq('id', change.id)
+    if (updateError) {
+      revalidateSites()
+      return { ok: false, error: `${updateError.message} — the current order has been reloaded.` }
+    }
+  }
 
   revalidateSites()
   return { ok: true }

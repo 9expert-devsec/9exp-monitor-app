@@ -17,6 +17,7 @@ interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Overview', href: '/' },
   { label: 'Sites', href: '/sites' },
+  { label: 'Notifications', href: '/notifications', adminOnly: true },
   { label: 'Users', href: '/users', adminOnly: true },
 ]
 

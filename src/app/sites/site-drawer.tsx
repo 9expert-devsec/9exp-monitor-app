@@ -15,6 +15,7 @@ import { Button } from '@/components/button'
 import { Field, INPUT_CLASS } from '@/components/field'
 import { Modal } from '@/components/modal'
 import { Switch } from '@/components/switch'
+import { toast } from '@/components/toaster'
 import { DELETE_SITE_WARNING } from '@/lib/messages'
 import {
   DEFAULT_EXPECTED_MS,
@@ -132,6 +133,7 @@ function DrawerPanel({ site, onClose }: { site: Site | null; onClose: () => void
     startSave(async () => {
       const result = isNew ? await createSiteAction(formData) : await updateSiteAction(formData)
       if (result.ok) {
+        toast(isNew ? `Added ${name.trim()}` : `Saved ${name.trim()}`)
         onClose()
       } else {
         setFieldErrors(result.fieldErrors)
@@ -418,8 +420,12 @@ function DeleteSiteDialog({
           onClick={() =>
             startTransition(async () => {
               const result = await deleteSiteAction(site.id, typed)
-              if (result.ok) onDeleted()
-              else setError(result.error)
+              if (result.ok) {
+                toast(`Deleted ${site.name}`)
+                onDeleted()
+              } else {
+                setError(result.error)
+              }
             })
           }
         >

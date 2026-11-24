@@ -39,3 +39,15 @@ export function publicRealtimeConfig(): { url: string; anonKey: string } | null 
   if (!url || !anonKey) return null
   return { url, anonKey }
 }
+
+/**
+ * The app's public origin, for links in Slack messages ("View details →").
+ * APP_BASE_URL wins; on Vercel the production domain is used as a fallback.
+ * Null when neither is set — messages are then sent without links.
+ */
+export function appBaseUrl(): string | null {
+  const explicit = process.env.APP_BASE_URL?.trim()
+  if (explicit) return explicit.replace(/\/+$/, '')
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
+  return vercel ? `https://${vercel}` : null
+}

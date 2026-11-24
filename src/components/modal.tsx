@@ -5,7 +5,14 @@ import { useEffect, useRef, type ReactNode } from 'react'
 
 /**
  * A native `<dialog>` opened with `showModal()`: the browser provides the focus
- * trap, Escape-to-close, inert background and focus return.
+ * trap, inert background and focus return.
+ *
+ * Closing is driven by React state only — Escape (`cancel`, prevented), the
+ * backdrop and the X button call `onClose`. The native `close` event is
+ * deliberately NOT wired: React Strict Mode runs the effect mount → cleanup →
+ * mount in dev, and the cleanup's `close()` queues a `close` event that lands
+ * after the remount, which used to unmount the dialog the instant it opened
+ * (the "Delete site does nothing" bug).
  */
 export function Modal({
   title,
@@ -28,7 +35,10 @@ export function Modal({
     <dialog
       ref={ref}
       aria-labelledby="modal-title"
-      onClose={onClose}
+      onCancel={(event) => {
+        event.preventDefault()
+        onClose()
+      }}
       // A click on the backdrop lands on the <dialog> element itself.
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose()
