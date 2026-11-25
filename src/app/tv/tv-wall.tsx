@@ -10,7 +10,9 @@ import {
   Clock,
   Countdown,
   DownTimer,
+  FeedIcon,
   FeedList,
+  FeedTime,
   LivePill,
   LogoPulse,
   Sparkline,
@@ -26,10 +28,11 @@ import { HistoryBar } from '@/components/history-bar'
 import { headlineFor, worstStatus, type StatusCounts } from '@/components/overall-status-card'
 import { messageFor } from '@/components/site-card'
 import { StatusDot } from '@/components/status-dot'
+import { StatusHeatmap, type HeatRow } from '@/components/tv/status-heatmap'
 import { hostOf } from '@/lib/format'
 import { CHECKER_NEVER_RAN_MESSAGE, CHECKER_STALLED_MESSAGE } from '@/lib/messages'
 import { STATUS_COLOR, STATUS_LABEL, STATUS_SOFT, displayStatusOf, isStale } from '@/lib/status'
-import { checkerStateAt, gridSizes, orderForTv, shortDuration, type TvEntry, type TvLayout } from '@/lib/tv'
+import { checkerStateAt, feedText, gridSizes, orderForTv, shortDuration, type TvEntry, type TvLayout } from '@/lib/tv'
 import type { TvData } from '@/lib/tv-data'
 import type { DisplayStatus } from '@/lib/types'
 
@@ -205,6 +208,14 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
   }[checker]
   const checkerColor = { healthy: 'var(--status-up)', late: 'var(--status-degraded)', stopped: 'var(--status-down)' }[checker]
 
+  // M13 heatmap rows: the same order as the tiles on every layout.
+  const heatRows: HeatRow[] = ordered.map(({ snapshot, status }) => ({
+    id: snapshot.site.id,
+    name: snapshot.site.name,
+    issue: status === 'down' || status === 'degraded',
+    cells: data.heatmap[snapshot.site.id] ?? [],
+  }))
+
   const sizes = gridSizes(total)
   const gridVars = Object.fromEntries(
     (Object.keys(sizes) as TvLayout[]).flatMap((layout) => {
@@ -342,7 +353,34 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
 
           {/* Grid + rail */}
           <div className="tv-main">
-            <TileGrid entries={ordered} data={data} now={now} flash={flash} style={gridVars} />
+            <div className="tv-left">
+              <TileGrid entries={ordered} data={data} now={now} flash={flash} style={gridVars} />
+              {/* Portrait and ultrawide: the heatmap as a card under the grid (portrait: instead of the rail). */}
+              {total > 0 && (
+                <section className="tv-heat-card" aria-label="Status, last 24 hours">
+                  <StatusHeatmap rows={heatRows} start={data.sparkStart} variant="large" />
+                  <div className="tv-heat-foot">
+                    <div className="flex min-w-0 flex-1 items-center overflow-hidden" style={{ gap: u(28) }}>
+                      {data.feed.length === 0 ? (
+                        <span className="text-(--text-muted)">No incidents in the last 24h</span>
+                      ) : (
+                        data.feed.slice(0, 2).map((item) => (
+                          <span key={item.id} className="flex min-w-0 items-center" style={{ gap: u(10) }}>
+                            <FeedTime at={item.at} now={now} />
+                            <FeedIcon kind={item.kind} size={u(10)} />
+                            <span className="truncate">{feedText(item)}</span>
+                          </span>
+                        ))
+                      )}
+                    </div>
+                    <span className="flex shrink-0 items-center text-(--text-secondary)" style={{ gap: u(8) }}>
+                      <span className="shrink-0 rounded-pill" style={{ width: u(9), height: u(9), background: checkerColor }} />
+                      {checkerText}
+                    </span>
+                  </div>
+                </section>
+              )}
+            </div>
 
             <aside className="tv-rail" aria-label="Incidents">
               <div className="flex items-baseline justify-between">
@@ -354,6 +392,11 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
                 </span>
               </div>
               <FeedList items={data.feed} now={now} newIds={feedChange.ids} generation={feedChange.generation} rowHeight={u(40)} />
+              {total > 0 && (
+                <div className="tv-heat-rail border-t border-(--border-subtle)" style={{ paddingTop: u(14) }}>
+                  <StatusHeatmap rows={heatRows} start={data.sparkStart} variant="compact" />
+                </div>
+              )}
               <div className="tv-rail-chart flex flex-col border-t border-(--border-subtle)" style={{ paddingTop: u(14), gap: u(8) }}>
                 <div className="flex items-baseline justify-between" style={{ fontSize: u(14) }}>
                   <span className="font-medium">Avg response · all sites</span>
@@ -402,6 +445,7 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
         liveState={liveState}
         stats={stats}
         feedChange={feedChange}
+        heatRows={heatRows}
       />
     </>
   )
@@ -578,7 +622,12 @@ function Tile({
       </div>
 
       <div className="tv-spark-wrap">
-        <Sparkline points={points} color={status === 'stale' ? 'var(--status-stale)' : color} version={sparkVersion} />
+        <Sparkline
+          points={points}
+          color={status === 'stale' ? 'var(--status-stale)' : color}
+          version={sparkVersion}
+          siteThreshold={site.expected_ms}
+        />
       </div>
 
       <div className="tv-hist relative">
@@ -600,6 +649,7 @@ function MobileView({
   liveState,
   stats,
   feedChange,
+  heatRows,
 }: {
   data: TvData
   ordered: TvEntry[]
@@ -610,6 +660,7 @@ function MobileView({
   liveState: LiveState
   stats: { label: string; value: React.ReactNode; delta: string; color: string }[]
   feedChange: Change
+  heatRows: HeatRow[]
 }) {
   return (
     <div className="tv-mobile min-h-dvh flex-col gap-4 bg-(--surface-page) p-4 text-(--text-primary)">
@@ -671,6 +722,15 @@ function MobileView({
           )
         })}
       </ul>
+
+      {heatRows.length > 0 && (
+        <>
+          <h2 className="text-sm font-semibold text-(--text-secondary)">Status · 24h</h2>
+          <section className="rounded-lg border border-(--border-subtle) bg-(--surface-card) p-3" aria-label="Status, last 24 hours">
+            <StatusHeatmap rows={heatRows} start={data.sparkStart} variant="mobile" />
+          </section>
+        </>
+      )}
 
       <section className="flex flex-col gap-2 rounded-lg border border-(--border-subtle) bg-(--surface-card) p-4">
         <h2 className="text-sm font-semibold">

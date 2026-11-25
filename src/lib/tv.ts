@@ -4,7 +4,7 @@
  */
 
 import { STALE_AFTER_MS } from './status'
-import type { DisplayStatus, SiteSnapshot } from './types'
+import type { CheckStatus, DisplayStatus, SiteSnapshot } from './types'
 
 export interface TvEntry {
   snapshot: SiteSnapshot
@@ -97,6 +97,73 @@ export function bucketAverages(values: TimedValue[], start: number, size: number
     counts[index] += 1
   }
   return sums.map((sum, index) => (counts[index] > 0 ? Math.round(sum / counts[index]) : null))
+}
+
+export type HeatStatus = 'up' | 'degraded' | 'down' | null
+
+const HEAT_RANK: Record<CheckStatus, number> = { up: 1, degraded: 2, down: 3 }
+
+/**
+ * Worst status checked in each of `count` buckets covering [start, start + count × size):
+ * down > degraded > up; a bucket without a check is null ("No data"). Called with
+ * the sparkline's start / size / count so the heatmap and sparkline line up.
+ */
+export function bucketWorstStatus(
+  rows: { at: number; status: CheckStatus }[],
+  start: number,
+  size: number,
+  count: number,
+): HeatStatus[] {
+  const worst = new Array<HeatStatus>(count).fill(null)
+  for (const { at, status } of rows) {
+    const index = Math.floor((at - start) / size)
+    if (index < 0 || index >= count) continue
+    const current = worst[index]
+    if (current === null || HEAT_RANK[status] > HEAT_RANK[current]) worst[index] = status
+  }
+  return worst
+}
+
+/** Bangkok has no daylight saving: local time is always UTC+7. */
+const BANGKOK_OFFSET_MS = 7 * 3_600_000
+
+export interface HeatAxis {
+  /** Index of the first bucket of Bangkok "today" — the midnight divider sits on its left edge. */
+  midnight: number | null
+  /** Buckets that start on a labelled hour (12:00 / 18:00 / 00:00 / 06:00 Bangkok). */
+  ticks: { index: number; label: string }[]
+}
+
+export function heatAxis(start: number, size: number, count: number, hours: number[] = [12, 18, 0, 6]): HeatAxis {
+  let midnight: number | null = null
+  const ticks: HeatAxis['ticks'] = []
+  for (let index = 0; index < count; index += 1) {
+    const local = start + index * size + BANGKOK_OFFSET_MS
+    const minuteOfDay = Math.floor((((local % 86_400_000) + 86_400_000) % 86_400_000) / 60_000)
+    if (minuteOfDay % 60 !== 0) continue
+    const hour = minuteOfDay / 60
+    if (hour === 0 && index > 0) midnight = index
+    if (hours.includes(hour)) ticks.push({ index, label: `${String(hour).padStart(2, '0')}:00` })
+  }
+  return { midnight, ticks }
+}
+
+// --- per-site threshold in the sparkline ---------------------------------------------
+
+export type ThresholdMode = 'in-scale' | 'above' | null
+
+/**
+ * Where the site's "degraded above" line goes. In scale when the 24 h peak is at
+ * least half the threshold (it then joins the y-range); otherwise "above": the
+ * site keeps its own y-range so its shape stays readable, and the line is pinned
+ * to the top edge. No points at all → "above" (nothing to compare with).
+ */
+export function thresholdMode(points: (number | null)[], threshold: number | null): ThresholdMode {
+  if (threshold === null) return null
+  let peak: number | null = null
+  for (const value of points) if (value !== null && (peak === null || value > peak)) peak = value
+  if (peak === null) return 'above'
+  return peak >= threshold * 0.5 ? 'in-scale' : 'above'
 }
 
 // --- incident feed -----------------------------------------------------------------

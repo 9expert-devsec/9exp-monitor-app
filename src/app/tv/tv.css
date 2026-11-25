@@ -7,7 +7,7 @@
  *   tv         landscape, ≥ 1600 × 1000           grid + right rail
  *   ultrawide  landscape, ≥ 2560 wide, ≥ 2:1      5 columns + wide rail
  *   laptop     landscape, < 1600 wide or < 1000 tall   grid + incident ticker
- *   portrait   portrait, ≥ 640 wide              2 columns, incidents below
+ *   portrait   portrait, ≥ 640 wide              2 columns, status heatmap below (no rail)
  *   mobile     < 640 wide                         .tv-mobile, the only one that scrolls
  * Motion: transform / opacity (and SVG stroke-dashoffset) only. Loops pause
  * while the tab is hidden (.tv-paused) and vanish under reduced motion.
@@ -45,6 +45,14 @@
   min-height: 0;
 }
 
+.tv-left {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: calc(24 * var(--u));
+  min-width: 0;
+  min-height: 0;
+}
+
 .tv-grid {
   --cols: var(--cols-tv);
   --rows: var(--rows-tv);
@@ -73,6 +81,17 @@
 }
 .tv-show-laptop {
   display: none;
+}
+
+/* 16:9: the rail holds 4 incidents, then the compact heatmap; the chart sits at the bottom. */
+.tv-rail .tv-feed {
+  flex: none;
+}
+.tv-rail .tv-feed > :nth-child(n + 5) {
+  display: none;
+}
+.tv-rail-chart {
+  margin-top: auto;
 }
 
 /* Rows that do not fully fit wrap into a hidden second column — never half a row. */
@@ -226,6 +245,26 @@
   color: var(--text-muted);
   white-space: nowrap;
 }
+/* The site's own "degraded above" label (Figma TV/Tile, "Threshold · degraded above"). */
+.tv-spark-limit {
+  position: absolute;
+  font-size: calc(11 * var(--u) * var(--s, 1));
+  line-height: 1;
+  color: var(--status-degraded);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.tv-spark-limit[data-mode='in-scale'] {
+  left: 0;
+  opacity: 0.9;
+  transform: translateY(calc(-100% - 3px));
+}
+.tv-spark-limit[data-mode='above'] {
+  right: 0;
+  top: 0;
+  opacity: 0.4;
+  transform: translateY(calc(-100% - 3px));
+}
 .tv-spark-dot::after {
   content: '';
   position: absolute;
@@ -233,6 +272,225 @@
   border-radius: inherit;
   background: currentColor;
   opacity: 0.22;
+}
+
+/* ---- M13 status heatmap ---------------------------------------------------------- */
+.tv-heat {
+  --heat-label: calc(190 * var(--u));
+  --heat-row: calc(17 * var(--u));
+  --heat-h: calc(13 * var(--u));
+  --heat-gap: calc(3 * var(--u));
+  --heat-col-gap: calc(12 * var(--u));
+  --heat-r: 3px;
+  --heat-font: calc(13 * var(--u));
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--u));
+  min-width: 0;
+}
+.tv-heat-compact {
+  --heat-label: calc(92 * var(--u));
+  --heat-row: calc(16 * var(--u));
+  --heat-h: calc(9 * var(--u));
+  --heat-gap: 1px;
+  --heat-col-gap: calc(8 * var(--u));
+  --heat-r: 1px;
+  --heat-font: calc(11 * var(--u));
+  gap: calc(6 * var(--u));
+}
+.tv-heat-mobile {
+  --heat-label: 76px;
+  --heat-row: 14px;
+  --heat-h: 10px;
+  --heat-gap: 1px;
+  --heat-col-gap: 6px;
+  --heat-r: 1px;
+  --heat-font: 10px;
+  gap: 6px;
+}
+.tv-heat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(16 * var(--u));
+}
+.tv-heat-title {
+  font-size: calc(22 * var(--u));
+  font-weight: 700;
+  line-height: 1.2;
+}
+.tv-heat-compact .tv-heat-title {
+  font-size: calc(15 * var(--u));
+  font-weight: 600;
+}
+.tv-heat-note {
+  font-size: calc(11 * var(--u));
+  color: var(--text-muted);
+}
+.tv-heat-legend {
+  display: flex;
+  align-items: center;
+  gap: calc(16 * var(--u));
+  font-size: calc(13 * var(--u));
+  color: var(--text-muted);
+}
+.tv-heat-mobile .tv-heat-legend {
+  gap: 12px;
+  font-size: 11px;
+}
+.tv-heat-legend li {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+}
+.tv-heat-mobile .tv-heat-legend li {
+  gap: 5px;
+}
+.tv-heat-legend-dot {
+  display: inline-flex;
+  width: calc(11 * var(--u));
+  height: calc(11 * var(--u));
+}
+.tv-heat-mobile .tv-heat-legend-dot {
+  width: 9px;
+  height: 9px;
+}
+.tv-heat-legend-dot > svg {
+  width: 100%;
+  height: 100%;
+}
+.tv-heat-body,
+.tv-heat-axis {
+  display: grid;
+  grid-template-columns: var(--heat-label) minmax(0, 1fr);
+  column-gap: var(--heat-col-gap);
+}
+.tv-heat-labels {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tv-heat-label {
+  height: var(--heat-row);
+  line-height: var(--heat-row);
+  font-size: var(--heat-font);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tv-heat-label[data-issue='true'] {
+  color: var(--text-primary);
+}
+.tv-heat-area {
+  position: relative;
+  min-width: 0;
+}
+.tv-heat-clip {
+  overflow: hidden;
+}
+.tv-heat-track {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.tv-heat-row {
+  display: grid;
+  grid-template-columns: repeat(var(--n), minmax(0, 1fr));
+  column-gap: var(--heat-gap);
+  align-items: center;
+  height: var(--heat-row);
+}
+.tv-heat-cell {
+  height: var(--heat-h);
+  border-radius: var(--heat-r);
+}
+.tv-heat-cell[data-s='up'] {
+  background: color-mix(in srgb, var(--status-up) 55%, transparent);
+}
+.tv-heat-cell[data-s='degraded'] {
+  background: var(--status-degraded);
+}
+.tv-heat-cell[data-s='down'] {
+  background: var(--status-down);
+}
+.tv-heat-cell[data-s='none'] {
+  background: var(--status-stale-soft);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+/* Left edge of bucket i, centred in the gap before it. */
+.tv-heat-midnight,
+.tv-heat-tick {
+  position: absolute;
+  left: calc((100% + var(--heat-gap)) * var(--i) / var(--n) - var(--heat-gap) / 2);
+}
+.tv-heat-midnight {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--text-muted);
+}
+/* Live column: outline that breathes 0.5 → 0.9 over 2.4 s (static 0.7 under reduced motion). */
+.tv-heat-live {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  right: -2px;
+  width: calc((100% + var(--heat-gap)) / var(--n) - var(--heat-gap) + 4px);
+  border: 1.5px solid var(--text-primary);
+  border-radius: calc(var(--heat-r) + 2px);
+  opacity: 0.7;
+  pointer-events: none;
+  animation: tv-live 2.4s ease-in-out infinite alternate;
+}
+@keyframes tv-live {
+  from { opacity: 0.5; }
+  to { opacity: 0.9; }
+}
+.tv-heat-axis {
+  font-size: var(--heat-font);
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+.tv-heat-yesterday {
+  font-family: var(--font-sans);
+}
+.tv-heat-axis-track {
+  position: relative;
+  height: 1.3em;
+}
+.tv-heat-tick {
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.tv-heat-now {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Large card (portrait / ultrawide) — hidden on 16:9 and laptop. */
+.tv-heat-card {
+  display: none;
+  flex-direction: column;
+  gap: calc(12 * var(--u));
+  min-width: 0;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-card);
+  padding: calc(18 * var(--u)) calc(24 * var(--u));
+}
+.tv-heat-foot {
+  display: none;
+  align-items: center;
+  gap: calc(24 * var(--u));
+  border-top: 1px solid var(--border-subtle);
+  padding-top: calc(12 * var(--u));
+  font-size: calc(14 * var(--u));
 }
 
 /* ---- banner (M11: tone layers crossfade with opacity) ------------------------ */
@@ -371,6 +629,25 @@
   .tv-root {
     --rail: calc(465 * var(--u));
   }
+  .tv-heat-card {
+    display: flex;
+  }
+  .tv-heat-card .tv-heat {
+    --heat-label: calc(180 * var(--u));
+    --heat-row: calc(14 * var(--u));
+    --heat-h: calc(10 * var(--u));
+    --heat-gap: calc(4 * var(--u));
+    --heat-font: calc(10 * var(--u));
+  }
+  .tv-heat-rail {
+    display: none;
+  }
+  .tv-rail .tv-feed {
+    flex: 1 1 0;
+  }
+  .tv-rail .tv-feed > :nth-child(n + 5) {
+    display: flex;
+  }
   .tv-grid {
     --cols: var(--cols-uw);
     --rows: var(--rows-uw);
@@ -405,7 +682,14 @@
   }
   .tv-main {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  /* The heatmap card replaces the incident rail; its footer carries the 2 newest events. */
+  .tv-rail {
+    display: none;
+  }
+  .tv-heat-card,
+  .tv-heat-foot {
+    display: flex;
   }
   .tv-grid {
     --cols: var(--cols-portrait);
@@ -436,10 +720,6 @@
   }
   .tv-top .tv-right {
     gap: calc(16 * var(--u)) !important;
-  }
-  .tv-rail .tv-feed {
-    height: calc(5 * 44 * var(--u));
-    flex: none;
   }
 }
 
@@ -476,6 +756,9 @@
     transition: none !important;
   }
   /* The band would rest off-tile anyway; make sure no frozen highlight shows. */
+  .tv-heat-live {
+    opacity: 0.7;
+  }
   .tv-flash,
   .tv-feed-new::before,
   .tv-halo {

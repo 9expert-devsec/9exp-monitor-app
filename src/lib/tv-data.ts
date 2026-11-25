@@ -3,7 +3,15 @@ import 'server-only'
 import { getDashboardData, type DashboardData } from '@/lib/dashboard'
 import { rollupDayKey } from '@/lib/format'
 import { serviceClient } from '@/lib/supabase/server'
-import { bucketAverages, groupedMs, shortDuration, type FeedItem, type TimedValue } from '@/lib/tv'
+import {
+  bucketAverages,
+  bucketWorstStatus,
+  groupedMs,
+  shortDuration,
+  type FeedItem,
+  type HeatStatus,
+  type TimedValue,
+} from '@/lib/tv'
 import type { CheckStatus } from '@/lib/types'
 
 /**
@@ -11,7 +19,8 @@ import type { CheckStatus } from '@/lib/types'
  * caller has verified the session; reads use the service role.
  *
  * Queries (all in parallel after getDashboardData):
- *  - health_checks of the last 24 h, one paged query for all sites
+ *  - health_checks of the last 24 h, one paged query for all sites (sparklines
+ *    and the status heatmap share it)
  *    (≈ 288 rows per site; PostgREST returns at most 1000 rows per page);
  *  - incidents touching the last 24 h;
  *  - degraded_episodes started in the last 24 h or still open;
@@ -40,6 +49,11 @@ export interface TodayStats {
 export interface TvData extends Pick<DashboardData, 'snapshots' | 'lastRunAt' | 'renderedAt'> {
   /** Per site id: 48 bucket averages over the last 24 h, oldest first. */
   sparklines: Record<string, (number | null)[]>
+  /**
+   * Per site id: worst status checked in each of the same 48 buckets (down rows
+   * included, unlike the sparkline); null = no check in that bucket.
+   */
+  heatmap: Record<string, HeatStatus[]>
   /** Start of the first sparkline bucket (changes every 30 min — drives the slide-in). */
   sparkStart: string
   /** Per site id: when its open degraded spell began. */
@@ -196,6 +210,18 @@ export async function getTvData(): Promise<TvData> {
     sparklines[site.id] = bucketAverages(bySite.get(site.id) ?? [], sparkStartMs, sparkSize, SPARK_POINTS)
   }
 
+  // Status heatmap: the same buckets, from every row (down ones too).
+  const statusRows = new Map<string, { at: number; status: CheckStatus }[]>()
+  for (const row of siteChecks) {
+    const list = statusRows.get(row.site_id) ?? []
+    list.push({ at: Date.parse(row.checked_at), status: row.status })
+    statusRows.set(row.site_id, list)
+  }
+  const heatmap: Record<string, HeatStatus[]> = {}
+  for (const site of sites) {
+    heatmap[site.id] = bucketWorstStatus(statusRows.get(site.id) ?? [], sparkStartMs, sparkSize, SPARK_POINTS)
+  }
+
   const railSize = 10 * 60_000
   const railStart = Math.floor(now / railSize) * railSize - (RAIL_POINTS - 1) * railSize
   const avg6h = bucketAverages([...bySite.values()].flat(), railStart, railSize, RAIL_POINTS)
@@ -297,6 +323,7 @@ export async function getTvData(): Promise<TvData> {
     lastRunAt: dashboard.lastRunAt,
     renderedAt: dashboard.renderedAt,
     sparklines,
+    heatmap,
     sparkStart: new Date(sparkStartMs).toISOString(),
     degradedSince,
     feed: feed.slice(0, 20),

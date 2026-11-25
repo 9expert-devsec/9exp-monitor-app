@@ -10,6 +10,7 @@ import {
   feedText,
   groupedMs,
   planSparkline,
+  thresholdMode,
   ticking,
   type FeedItem,
   type SparkPoint,
@@ -266,12 +267,19 @@ export function TweenNumber({
  *  - the live end-dot only when the newest bucket has data.
  * When a new bucket arrives (`version` changes) the line slides left one step,
  * the last segment draws in (700 ms) and the end-dot pulses.
+ *
+ * `siteThreshold` (tiles): the site's own "degraded above" line, dashed amber.
+ * In scale when the 24 h peak is ≥ 50 % of it (it joins the y-range, label on
+ * the left); otherwise pinned to the top edge, faded, with "↑ 1,500 ms" on the
+ * right — the threshold is above this chart. Static; only the label fades in
+ * (200 ms) when a site moves between the two.
  */
 export function Sparkline({
   points,
   color,
   version,
   threshold = null,
+  siteThreshold = null,
   showCollectingLabel = true,
   className,
 }: {
@@ -279,6 +287,8 @@ export function Sparkline({
   color: string
   version: string
   threshold?: number | null
+  /** The site's own expected_ms (TV tiles). */
+  siteThreshold?: number | null
   /** Off where there is no room for the label (the 64 × 28 mobile row). */
   showCollectingLabel?: boolean
   className?: string
@@ -288,10 +298,13 @@ export function Sparkline({
   const groupRef = useRef<SVGGElement>(null)
   const lastRef = useRef<SVGPathElement>(null)
   const dotRef = useRef<HTMLSpanElement>(null)
+  const limitRef = useRef<HTMLSpanElement>(null)
   const seen = useRef({ version, last: points.at(-1) ?? null })
 
   const n = points.length
-  const plan = planSparkline(points, { threshold })
+  const mode = thresholdMode(points, siteThreshold)
+  const seenMode = useRef(mode)
+  const plan = planSparkline(points, { threshold: mode === 'in-scale' ? siteThreshold : threshold })
   const x = (index: number) => (n > 1 ? (index / (n - 1)) * 100 : 50)
   const y = (value: number) => 100 - ((value - plan.lo) / (plan.hi - plan.lo)) * 100
   const line = (run: SparkPoint[]) =>
@@ -323,6 +336,15 @@ export function Sparkline({
       })
     }
   }, [version, points, n])
+
+  useEffect(() => {
+    const before = seenMode.current
+    seenMode.current = mode
+    if (before === mode || before === null || mode === null || prefersReducedMotion()) return
+    limitRef.current?.animate([{ opacity: 0 }, {}], { duration: 200, easing: 'ease-out' })
+  }, [mode])
+
+  const limitY = mode === 'in-scale' && siteThreshold !== null ? y(siteThreshold) : 0
 
   // Isolated points, plus every point while collecting — minus the end-dot's own point.
   const dots = plan.dots.filter((dot) => dot.index !== plan.endIndex)
@@ -358,6 +380,19 @@ export function Sparkline({
             stroke="var(--status-degraded)"
             strokeWidth="1"
             strokeDasharray="4 4"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+        {mode !== null && (
+          <line
+            x1="0"
+            x2="100"
+            y1={limitY}
+            y2={limitY}
+            stroke="var(--status-degraded)"
+            strokeOpacity={mode === 'in-scale' ? 0.9 : 0.4}
+            strokeWidth="1.5"
+            strokeDasharray="6 5"
             vectorEffect="non-scaling-stroke"
           />
         )}
@@ -409,6 +444,16 @@ export function Sparkline({
           className="tv-spark-dot"
           style={{ left: `${x(plan.endIndex)}%`, top: `${y(endValue)}%`, background: color, color }}
         />
+      )}
+      {mode !== null && siteThreshold !== null && (
+        <span
+          ref={limitRef}
+          className="tv-spark-limit tv-num"
+          data-mode={mode}
+          style={mode === 'in-scale' ? { top: `${limitY}%` } : undefined}
+        >
+          {mode === 'above' ? `↑ ${groupedMs(siteThreshold)}` : groupedMs(siteThreshold)}
+        </span>
       )}
       {plan.collecting && showCollectingLabel && <span className="tv-spark-label">Collecting data…</span>}
     </div>
@@ -467,7 +512,7 @@ export function LogoPulse({ mood, size }: { mood: 'normal' | 'down' | 'stale'; s
 // --- feed ----------------------------------------------------------------------------------------------
 
 /** "17:05" today, "Yesterday 17:05" (muted "Yesterday") for anything before today, Bangkok days. */
-function FeedTime({ at, now }: { at: string; now: number }) {
+export function FeedTime({ at, now }: { at: string; now: number }) {
   const ms = Date.parse(at)
   const earlier = rollupDayKey(new Date(ms)) !== rollupDayKey(new Date(now))
   return (
