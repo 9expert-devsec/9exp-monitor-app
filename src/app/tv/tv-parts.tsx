@@ -3,14 +3,16 @@
 import { useEffect, useId, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 
 import { Logo } from '@/components/logo'
-import { formatPercent } from '@/lib/format'
+import { formatPercent, rollupDayKey } from '@/lib/format'
 import {
   CHECK_INTERVAL_MS,
   countdownAt,
   feedText,
   groupedMs,
+  planSparkline,
   ticking,
   type FeedItem,
+  type SparkPoint,
 } from '@/lib/tv'
 
 const TIME_ZONE = 'Asia/Bangkok'
@@ -253,22 +255,32 @@ export function TweenNumber({
 // --- M7 sparkline ------------------------------------------------------------------------------
 
 /**
- * 24 h area chart: 2 px line in the status colour over a gradient fading to
- * transparent, broken at gaps, with a live end-dot. When a new bucket arrives
- * (`version` changes) the line slides left one step, the last segment draws
- * in (700 ms) and the end-dot pulses.
+ * Fixed-axis sparkline (24 h for tiles, 6 h for the rail), built to read well
+ * when most buckets are empty:
+ *  - a faint dotted baseline spans the full width, so empty stretches read as
+ *    "no data" rather than a broken chart;
+ *  - gaps of ≤ 2 buckets are bridged; longer gaps stay broken;
+ *  - isolated points are small dots (no area, no stub);
+ *  - under 4 points: baseline + dots + "Collecting data…" instead of an area;
+ *  - per-series Y range with ~15 % padding; a flat series sits mid-height;
+ *  - the live end-dot only when the newest bucket has data.
+ * When a new bucket arrives (`version` changes) the line slides left one step,
+ * the last segment draws in (700 ms) and the end-dot pulses.
  */
 export function Sparkline({
   points,
   color,
   version,
   threshold = null,
+  showCollectingLabel = true,
   className,
 }: {
   points: (number | null)[]
   color: string
   version: string
   threshold?: number | null
+  /** Off where there is no room for the label (the 64 × 28 mobile row). */
+  showCollectingLabel?: boolean
   className?: string
 }) {
   const rawId = useId()
@@ -279,29 +291,18 @@ export function Sparkline({
   const seen = useRef({ version, last: points.at(-1) ?? null })
 
   const n = points.length
-  const values = points.filter((value): value is number => value !== null)
-  const lo = Math.min(...values, ...(threshold !== null ? [threshold] : []))
-  const hi = Math.max(...values, ...(threshold !== null ? [threshold] : []))
-  const span = hi - lo || 1
+  const plan = planSparkline(points, { threshold })
   const x = (index: number) => (n > 1 ? (index / (n - 1)) * 100 : 50)
-  const y = (value: number) => 92 - ((value - lo) / span) * 80
+  const y = (value: number) => 100 - ((value - plan.lo) / (plan.hi - plan.lo)) * 100
+  const line = (run: SparkPoint[]) =>
+    run.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.index).toFixed(2)},${y(p.value).toFixed(2)}`).join(' ')
 
-  // Split at gaps.
-  const runs: { index: number; value: number }[][] = []
-  let run: { index: number; value: number }[] = []
-  points.forEach((value, index) => {
-    if (value === null) {
-      if (run.length) runs.push(run)
-      run = []
-    } else run.push({ index, value })
-  })
-  if (run.length) runs.push(run)
-
-  const line = (r: { index: number; value: number }[]) =>
-    r.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.index).toFixed(2)},${y(p.value).toFixed(2)}`).join(' ')
-  const lastRun = runs.at(-1)
-  const lastPoint = lastRun?.at(-1)
-  const lastSegment = lastRun && lastRun.length > 1 ? line(lastRun.slice(-2)) : null
+  const lastRun = plan.runs.at(-1)
+  const lastSegment =
+    lastRun && lastRun.length > 1 && plan.endIndex !== null && lastRun.at(-1)!.index === plan.endIndex
+      ? line(lastRun.slice(-2))
+      : null
+  const endValue = plan.endIndex !== null ? points[plan.endIndex] : null
 
   useEffect(() => {
     const before = seen.current
@@ -323,9 +324,8 @@ export function Sparkline({
     }
   }, [version, points, n])
 
-  if (values.length === 0) {
-    return <div className={`tv-spark ${className ?? ''}`} aria-hidden="true" />
-  }
+  // Isolated points, plus every point while collecting — minus the end-dot's own point.
+  const dots = plan.dots.filter((dot) => dot.index !== plan.endIndex)
 
   return (
     <div className={`tv-spark ${className ?? ''}`} aria-hidden="true">
@@ -336,6 +336,19 @@ export function Sparkline({
             <stop offset="100%" stopColor={color} stopOpacity="0" />
           </linearGradient>
         </defs>
+        {/* "No data" reads as a quiet dotted floor, not as a broken chart. */}
+        <line
+          x1="0"
+          x2="100"
+          y1="99"
+          y2="99"
+          stroke="var(--text-muted)"
+          strokeOpacity="0.35"
+          strokeWidth="1"
+          strokeDasharray="1 4"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
         {threshold !== null && (
           <line
             x1="0"
@@ -349,17 +362,17 @@ export function Sparkline({
           />
         )}
         <g ref={groupRef}>
-          {runs.map((r, i) => (
+          {plan.runs.map((run, i) => (
             <path
               key={`a${i}`}
-              d={`${line(r)} L${x(r.at(-1)!.index).toFixed(2)},100 L${x(r[0].index).toFixed(2)},100 Z`}
+              d={`${line(run)} L${x(run.at(-1)!.index).toFixed(2)},100 L${x(run[0].index).toFixed(2)},100 Z`}
               fill={`url(#${gradientId})`}
             />
           ))}
-          {runs.map((r, i) => (
+          {plan.runs.map((run, i) => (
             <path
               key={`l${i}`}
-              d={line(r)}
+              d={line(run)}
               fill="none"
               stroke={color}
               strokeWidth="2"
@@ -383,13 +396,21 @@ export function Sparkline({
           )}
         </g>
       </svg>
-      {lastPoint && (
+      {dots.map((dot) => (
+        <span
+          key={dot.index}
+          className="tv-spark-point"
+          style={{ left: `${x(dot.index)}%`, top: `${y(dot.value)}%`, background: color }}
+        />
+      ))}
+      {plan.endIndex !== null && endValue !== null && (
         <span
           ref={dotRef}
           className="tv-spark-dot"
-          style={{ left: `${x(lastPoint.index)}%`, top: `${y(lastPoint.value)}%`, background: color, color }}
+          style={{ left: `${x(plan.endIndex)}%`, top: `${y(endValue)}%`, background: color, color }}
         />
       )}
+      {plan.collecting && showCollectingLabel && <span className="tv-spark-label">Collecting data…</span>}
     </div>
   )
 }
@@ -445,6 +466,18 @@ export function LogoPulse({ mood, size }: { mood: 'normal' | 'down' | 'stale'; s
 
 // --- feed ----------------------------------------------------------------------------------------------
 
+/** "17:05" today, "Yesterday 17:05" (muted "Yesterday") for anything before today, Bangkok days. */
+function FeedTime({ at, now }: { at: string; now: number }) {
+  const ms = Date.parse(at)
+  const earlier = rollupDayKey(new Date(ms)) !== rollupDayKey(new Date(now))
+  return (
+    <span className="tv-num relative shrink-0 text-(--text-muted) whitespace-nowrap">
+      {earlier && <span className="font-sans opacity-75">Yesterday </span>}
+      {clockText(ms)}
+    </span>
+  )
+}
+
 const FEED_COLOR = {
   down: 'var(--status-down)',
   recovered: 'var(--status-up)',
@@ -469,12 +502,15 @@ export function FeedIcon({ kind, size }: { kind: FeedItem['kind']; size: string 
  */
 export function FeedList({
   items,
+  now,
   newIds,
   generation,
   rowHeight,
   compact = false,
 }: {
   items: FeedItem[]
+  /** For the "Yesterday" label. */
+  now: number
   newIds: ReadonlySet<string>
   generation: number
   rowHeight: string
@@ -511,7 +547,7 @@ export function FeedList({
           className={`tv-feed-row flex min-w-0 items-center ${newIds.has(item.id) ? 'tv-feed-new' : ''}`}
           style={{ height: rowHeight, gap: compact ? '0.6rem' : u(12), fontSize: compact ? '0.8rem' : u(15) }}
         >
-          <span className="tv-num relative shrink-0 text-(--text-muted)">{clockText(Date.parse(item.at))}</span>
+          <FeedTime at={item.at} now={now} />
           <span className="relative inline-flex">
             <FeedIcon kind={item.kind} size={compact ? '0.6rem' : u(11)} />
           </span>
@@ -528,7 +564,7 @@ export function FeedList({
  * Laptop ticker: the feed as a seamless marquee at ~40 px/s. The track holds
  * the items twice; its width is measured once per resize to set the duration.
  */
-export function Ticker({ items }: { items: FeedItem[] }) {
+export function Ticker({ items, now }: { items: FeedItem[]; now: number }) {
   const trackRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -559,7 +595,7 @@ export function Ticker({ items }: { items: FeedItem[] }) {
               <div key={copy} className="flex shrink-0" aria-hidden={copy === 1 ? true : undefined}>
                 {content.map((item) => (
                   <span key={`${copy}-${item.id}`} className="inline-flex items-center whitespace-nowrap" style={{ gap: u(8), paddingRight: u(40) }}>
-                    <span className="tv-num text-(--text-muted)">{clockText(Date.parse(item.at))}</span>
+                    <FeedTime at={item.at} now={now} />
                     <FeedIcon kind={item.kind} size={u(10)} />
                     {feedText(item)}
                   </span>

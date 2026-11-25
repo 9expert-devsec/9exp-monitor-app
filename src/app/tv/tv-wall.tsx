@@ -353,7 +353,7 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
                   Last 24h
                 </span>
               </div>
-              <FeedList items={data.feed} newIds={feedChange.ids} generation={feedChange.generation} rowHeight={u(40)} />
+              <FeedList items={data.feed} now={now} newIds={feedChange.ids} generation={feedChange.generation} rowHeight={u(40)} />
               <div className="tv-rail-chart flex flex-col border-t border-(--border-subtle)" style={{ paddingTop: u(14), gap: u(8) }}>
                 <div className="flex items-baseline justify-between" style={{ fontSize: u(14) }}>
                   <span className="font-medium">Avg response · all sites</span>
@@ -374,7 +374,7 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
           </div>
 
           {/* Laptop: the feed as a ticker */}
-          <Ticker items={data.feed} />
+          <Ticker items={data.feed} now={now} />
 
           {/* Footer */}
           <footer className="flex items-center text-(--text-muted)" style={{ fontSize: u(15), gap: u(20) }}>
@@ -395,6 +395,7 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
       <MobileView
         data={data}
         ordered={ordered}
+        now={now}
         headline={headline}
         summary={summary}
         bannerStatus={bannerStatus}
@@ -592,6 +593,7 @@ function Tile({
 function MobileView({
   data,
   ordered,
+  now,
   headline,
   summary,
   bannerStatus,
@@ -601,6 +603,7 @@ function MobileView({
 }: {
   data: TvData
   ordered: TvEntry[]
+  now: number
   headline: string
   summary: string
   bannerStatus: DisplayStatus
@@ -659,7 +662,7 @@ function MobileView({
                 <p className="truncate text-xs text-(--text-muted)">{line}</p>
               </div>
               <div className="relative shrink-0" style={{ width: 64, height: 28 }}>
-                <Sparkline points={data.sparklines[snapshot.site.id] ?? []} color={color} version={data.sparkStart} />
+                <Sparkline points={data.sparklines[snapshot.site.id] ?? []} color={color} version={data.sparkStart} showCollectingLabel={false} />
               </div>
               <span className="tv-num w-14 shrink-0 text-right text-sm font-semibold" style={{ color: status === 'up' ? undefined : color }}>
                 {status === 'down' ? 'DOWN' : status === 'stale' ? '—' : <TweenNumber value={snapshot.latest?.response_ms ?? null} format="plain-ms" />}
@@ -673,7 +676,7 @@ function MobileView({
         <h2 className="text-sm font-semibold">
           Incidents <span className="font-normal text-(--text-muted)">· 24h</span>
         </h2>
-        <FeedList items={data.feed.slice(0, 4)} newIds={feedChange.ids} generation={feedChange.generation} rowHeight="2rem" compact />
+        <FeedList items={data.feed.slice(0, 4)} now={now} newIds={feedChange.ids} generation={feedChange.generation} rowHeight="2rem" compact />
       </section>
       <p className="text-center text-xs text-(--text-muted)">Sites with issues are always listed first</p>
     </div>

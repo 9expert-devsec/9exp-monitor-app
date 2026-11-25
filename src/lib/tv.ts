@@ -179,3 +179,79 @@ export function ticking(ms: number): string {
 export function groupedMs(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : `${Math.round(value).toLocaleString('en-US')} ms`
 }
+
+// --- sparkline plan ----------------------------------------------------------------------
+
+export interface SparkPoint {
+  index: number
+  value: number
+}
+
+export interface SparkPlan {
+  /** Connected runs (≥ 2 points) after bridging short gaps — drawn as line + area. */
+  runs: SparkPoint[][]
+  /** Isolated points (no neighbour even after bridging) — drawn as a dot only. */
+  dots: SparkPoint[]
+  /** Y range with ~15 % padding; a flat series sits mid-height. */
+  lo: number
+  hi: number
+  /** Fewer than `minPoints` real buckets: baseline + dots + "Collecting data…" only. */
+  collecting: boolean
+  /** Index of the live end-dot — only when the newest bucket is non-null. */
+  endIndex: number | null
+}
+
+/**
+ * How to draw a fixed-axis sparkline from buckets that may be mostly empty.
+ * Gaps of up to `maxBridge` empty buckets between two values are bridged by a
+ * straight line (≤ 1 h at 30-minute buckets); longer gaps stay broken.
+ */
+export function planSparkline(
+  points: (number | null)[],
+  { maxBridge = 2, minPoints = 4, threshold = null }: { maxBridge?: number; minPoints?: number; threshold?: number | null } = {},
+): SparkPlan {
+  const real = points.flatMap((value, index) => (value === null ? [] : [{ index, value }]))
+  const last = points.length - 1
+  const endIndex = last >= 0 && points[last] !== null ? last : null
+
+  const range = [...real.map((p) => p.value), ...(threshold !== null ? [threshold] : [])]
+  let lo = range.length ? Math.min(...range) : 0
+  let hi = range.length ? Math.max(...range) : 1
+  if (hi === lo) {
+    lo -= 1
+    hi += 1
+  } else {
+    const pad = (hi - lo) * 0.15
+    lo -= pad
+    hi += pad
+  }
+
+  if (real.length < minPoints) return { runs: [], dots: real, lo, hi, collecting: true, endIndex }
+
+  // Bridge short interior gaps by linear interpolation (for drawing only).
+  const filled = points.slice()
+  for (let i = 0; i < real.length - 1; i += 1) {
+    const a = real[i]
+    const b = real[i + 1]
+    const gap = b.index - a.index - 1
+    if (gap > 0 && gap <= maxBridge) {
+      for (let k = 1; k <= gap; k += 1) filled[a.index + k] = a.value + ((b.value - a.value) * k) / (gap + 1)
+    }
+  }
+
+  const runs: SparkPoint[][] = []
+  const dots: SparkPoint[] = []
+  let run: SparkPoint[] = []
+  const flush = () => {
+    if (run.length === 1) dots.push(run[0])
+    else if (run.length > 1) runs.push(run)
+    run = []
+  }
+  filled.forEach((value, index) => {
+    if (value === null) flush()
+    else run.push({ index, value })
+  })
+  flush()
+
+  return { runs, dots, lo, hi, collecting: false, endIndex }
+}

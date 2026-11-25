@@ -31,7 +31,9 @@ export interface TodayStats {
   avgMsYesterday: number | null
   uptimeToday: number | null
   uptime30d: number | null
+  /** Downs + slow spells that started today (Bangkok). */
   incidentsToday: number
+  /** Of those, still ongoing. */
   incidentsOpen: number
 }
 
@@ -263,6 +265,11 @@ export async function getTvData(): Promise<TvData> {
     }
   }
 
+  // "Incidents today" matches the feed: downs AND slow (degraded) spells that
+  // STARTED today (Bangkok); "open" = those of them still ongoing.
+  const downsToday = incidents.filter((row) => enabled.has(row.site_id) && Date.parse(row.started_at) >= todayStart)
+  const slowToday = episodes.filter((row) => enabled.has(row.site_id) && Date.parse(row.started_at) >= todayStart)
+
   const todayStats: TodayStats = {
     up: 0, // filled on the client from live statuses (it ages with the clock)
     total: sites.length,
@@ -270,8 +277,10 @@ export async function getTvData(): Promise<TvData> {
     avgMsYesterday: weightedAverage(yesterdayRows),
     uptimeToday: uptimeOf(sum(todayRows, 'up_count'), sum(todayRows, 'degraded_count'), sum(todayRows, 'down_count')),
     uptime30d: uptimeOf(up30, degraded30, down30),
-    incidentsToday: incidents.filter((row) => enabled.has(row.site_id) && Date.parse(row.started_at) >= todayStart).length,
-    incidentsOpen: incidents.filter((row) => enabled.has(row.site_id) && row.resolved_at === null).length,
+    incidentsToday: downsToday.length + slowToday.length,
+    incidentsOpen:
+      downsToday.filter((row) => row.resolved_at === null).length +
+      slowToday.filter((row) => row.ended_at === null).length,
   }
 
   // --- checker -------------------------------------------------------------------------
