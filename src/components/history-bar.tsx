@@ -23,7 +23,14 @@ function tooltipFor(bucket: DayBucket): string {
  *
  * Height is 28 on cards and 40 on the detail page.
  */
-export function HistoryBar({ history, height = 28 }: { history: DayBucket[]; height?: number }) {
+export function HistoryBar({
+  history,
+  height = 28,
+}: {
+  history: DayBucket[]
+  /** px, or any CSS length (the TV wall passes a clamp()). */
+  height?: number | string
+}) {
   return (
     <div
       className="flex items-stretch gap-[2px]"

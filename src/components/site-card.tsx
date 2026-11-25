@@ -31,13 +31,14 @@ import type { DisplayStatus, SiteSnapshot } from '@/lib/types'
  * optional health check reported a problem — `error` then holds that reason.
  * Down shows the raw English error (HTTP status line or network reason).
  */
-interface CardMessage {
+export interface CardMessage {
   text: string
   /** `explain` is a Thai sentence (sans); `raw` is the checker's English error text (mono). */
   kind: 'explain' | 'raw'
 }
 
-function messageFor(snapshot: SiteSnapshot, status: DisplayStatus): CardMessage | null {
+/** Shared with the TV wall (`/tv`), so both explain a status the same way. */
+export function messageFor(snapshot: SiteSnapshot, status: DisplayStatus): CardMessage | null {
   const { latest, openIncident, site } = snapshot
   if (status === 'stale') {
     return { text: latest ? STALE_MESSAGE : SITE_NEVER_CHECKED_MESSAGE, kind: 'explain' }

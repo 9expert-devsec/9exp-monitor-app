@@ -1,3 +1,4 @@
+import { Tv } from 'lucide-react'
 import Link from 'next/link'
 
 import { AvatarMenu } from '@/components/avatar-menu'
@@ -43,6 +44,15 @@ export async function TopNav({ live }: { live: boolean }) {
         <NavLinks isAdmin={profile.role === 'admin' && !profile.disabled} />
 
         <div className="ml-auto flex items-center gap-3">
+          <Link
+            href="/tv"
+            className="inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm font-medium text-(--text-secondary) hover:bg-(--surface-raised) hover:text-(--text-primary)"
+            title="TV mode — full-screen wall display"
+          >
+            <Tv size={16} aria-hidden="true" />
+            <span className="hidden md:inline">TV mode</span>
+            <span className="sr-only md:hidden">TV mode</span>
+          </Link>
           <LivePill live={live} />
           <AvatarMenu name={profile.full_name} email={email} />
         </div>

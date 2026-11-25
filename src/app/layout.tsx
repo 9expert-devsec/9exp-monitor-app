@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 
 import { Toaster } from '@/components/toaster'
+import { NavGate } from '@/components/nav-gate'
 import { TopNav } from '@/components/top-nav'
 import { publicRealtimeConfig } from '@/lib/env'
 
@@ -23,7 +24,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full">
       <body className="flex min-h-full flex-col antialiased">
-        <TopNav live={publicRealtimeConfig() !== null} />
+        <NavGate>
+          <TopNav live={publicRealtimeConfig() !== null} />
+        </NavGate>
         <div className="flex flex-1 flex-col">{children}</div>
         <Toaster />
       </body>
