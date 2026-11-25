@@ -32,11 +32,11 @@ export const STALE_MESSAGE = 'ไม่มีผลตรวจเกิน 15 �
 export const SITE_NEVER_CHECKED_MESSAGE = 'ยังไม่เคยตรวจเว็บนี้'
 
 export const CHECKER_STALLED_MESSAGE =
-  'ไม่มีผลตรวจเข้ามาเกิน 15 นาที สถานะด้านล่างจึงแสดงเป็น "No data" แทนที่จะถือว่าปกติ — ตรวจ workflow "monitor" ใน GitHub Actions'
+  'ไม่มีผลตรวจเข้ามาเกิน 15 นาที สถานะด้านล่างจึงแสดงเป็น "No data" แทนที่จะถือว่าปกติ — ตรวจ cron job "monitor-checker" ใน Supabase'
 
 /** No check has ever been recorded, for any site. */
 export const CHECKER_NEVER_RAN_MESSAGE =
-  'ยังไม่เคยมีผลตรวจ — กด Check now หรือรอ GitHub Actions รอบแรก'
+  'ยังไม่เคยมีผลตรวจ — กด Check now หรือรอ cron job "monitor-checker" รอบแรก (ทุก 5 นาที)'
 
 // --- Sign-in and passwords -------------------------------------------------
 

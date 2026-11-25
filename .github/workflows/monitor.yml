@@ -1,11 +1,10 @@
 name: monitor
 
-# Runs the checker every 5 minutes. GitHub's scheduler is best-effort and can
-# lag under load, which is exactly why the dashboard renders anything older than
-# 15 minutes as `stale` rather than trusting the last known status.
+# Manual runs only. The 5-minute schedule now lives in Supabase pg_cron, job
+# `monitor-checker` (supabase/migrations/20261125100000_checker_cron.sql):
+# GitHub's scheduler fired this workflow only a few times a day. Use
+# "Run workflow" here to trigger one check run by hand.
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 concurrency:

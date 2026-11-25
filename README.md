@@ -6,7 +6,7 @@ real-time dashboard. Sites are managed by admins on the **Sites** page.
 
 - **Framework:** Next.js 16 (App Router, TypeScript, Turbopack)
 - **Data store:** Supabase (Postgres + Realtime)
-- **Scheduler:** GitHub Actions, every 5 minutes
+- **Scheduler:** Supabase `pg_cron` + `pg_net`, every 5 minutes (GitHub Actions for the daily prune and manual runs)
 - **Deploy target:** Vercel
 
 The monitor never fetches a monitored site from the browser. All probing happens
@@ -20,7 +20,7 @@ server-side in `POST /api/checks/run`.
 | ------------------------------- | -------- | -------------- | ------------------------------------------------------------------ |
 | `SUPABASE_URL`                  | yes      | server only    | Supabase project URL.                                              |
 | `SUPABASE_SERVICE_ROLE_KEY`     | yes      | server only    | Bypasses RLS. The only key that writes. Never expose it.           |
-| `CRON_SECRET`                   | yes      | server only    | Shared secret for `/api/checks/run` and `/api/checks/prune`.       |
+| `CRON_SECRET`                   | yes      | server only    | Shared secret for `/api/checks/run`, `/prune` and `/api/cron/watchdog`. |
 | `NEXT_PUBLIC_SUPABASE_URL`      | yes      | browser        | Sign-in, session cookies and Realtime.                             |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes      | browser        | Publishable anon key. Alone it reads nothing; with a session, RLS. |
 
@@ -33,7 +33,7 @@ top nav shows whether live updates are on (`Live`) or off (`Live updates off`).
 
 ### GitHub Actions secrets
 
-Both workflows need:
+The `monitor` (manual only) and `prune` workflows need:
 
 | Secret        | Value                                                    |
 | ------------- | -------------------------------------------------------- |
@@ -54,6 +54,7 @@ supabase db push
 #       supabase/migrations/20261124150000_sites_managed.sql
 #       supabase/migrations/20261124180000_notifications.sql
 #       supabase/migrations/20261124200000_watchdog_cron.sql
+#       supabase/migrations/20261125100000_checker_cron.sql
 
 # 2. Create the first admin (prints a temporary password once)
 npm run create-admin -- --email you@example.com --name "Your Name"
@@ -285,17 +286,10 @@ on; email is not built yet.
 
 `POST /api/cron/watchdog` (header `x-cron-secret: $CRON_SECRET`) posts once
 per stall when the newest check result is older than the configured minutes.
-It must be called by a scheduler that does **not** depend on the `monitor`
-GitHub Actions workflow — if Actions stops, a step inside it cannot notice.
-It is scheduled in the database: migration `20261124200000_watchdog_cron.sql`
-adds a `pg_cron` job `monitor-watchdog` (every 5 minutes) that calls it with
-`pg_net`. The URL and the secret come from Supabase Vault, so nothing secret is
-in the repo; until both exist the job does nothing:
-
-```sql
-select vault.create_secret('<BASE_URL>', 'monitor_base_url');       -- e.g. https://monitor.9expert.app
-select vault.create_secret('<CRON_SECRET>', 'monitor_cron_secret'); -- same as CRON_SECRET
-```
+It runs as its own `pg_cron` job, `monitor-watchdog`, separate from the
+checker's job — see [Scheduled jobs](#scheduled-jobs). It notices the checker
+job failing or `/api/checks/run` erroring; it cannot notice `pg_cron` itself
+stopping, since it runs there too.
 
 With Slack off (or no webhook saved) the route answers 200 and posts nothing.
 
@@ -317,17 +311,46 @@ With Slack off (or no webhook saved) the route answers 200 and posts nothing.
 
 ## Scheduled jobs
 
-| Workflow                          | Schedule           | Calls                 |
-| --------------------------------- | ------------------ | --------------------- |
-| `.github/workflows/monitor.yml`   | `*/5 * * * *`      | `/api/checks/run`     |
-| `.github/workflows/prune.yml`     | `20 18 * * *` UTC  | `/api/checks/prune`   |
+The 5-minute jobs run inside Supabase: `pg_cron` fires a `security definer`
+function in the `private` schema, which POSTs to the app with `pg_net` and the
+`x-cron-secret` header.
 
-Both support `workflow_dispatch` for manual runs and fail the job on a non-2xx
-response, so a broken checker is visible in the Actions tab rather than silently
-green.
+| Job (pg_cron)       | Schedule      | Calls                  | Migration                         |
+| ------------------- | ------------- | ---------------------- | --------------------------------- |
+| `monitor-checker`   | `*/5 * * * *` | `/api/checks/run`      | `20261125100000_checker_cron.sql` |
+| `monitor-watchdog`  | `*/5 * * * *` | `/api/cron/watchdog`   | `20261124200000_watchdog_cron.sql`|
 
-GitHub's scheduler is best-effort and skews under load; a 5-minute cron often
-lands every 6–10 minutes. That is why the staleness threshold is 15 minutes.
+Both read the target and the secret from **Supabase Vault** at run time, so
+nothing secret is in the repo. Until both secrets exist the jobs run and do
+nothing:
+
+```sql
+select vault.create_secret('<BASE_URL>', 'monitor_base_url');       -- e.g. https://monitor.9expert.app
+select vault.create_secret('<CRON_SECRET>', 'monitor_cron_secret'); -- same as CRON_SECRET in Vercel
+```
+
+To see them working:
+
+```sql
+select jobid, jobname, schedule, active from cron.job order by jobname;
+select status, return_message, start_time from cron.job_run_details
+  where jobid = (select jobid from cron.job where jobname = 'monitor-checker')
+  order by start_time desc limit 10;
+select id, status_code, left(content::text, 200), created
+  from net._http_response order by created desc limit 10;
+```
+
+GitHub Actions keeps two workflows:
+
+| Workflow                          | Trigger                     | Calls               |
+| --------------------------------- | --------------------------- | ------------------- |
+| `.github/workflows/monitor.yml`   | `workflow_dispatch` (manual) | `/api/checks/run`   |
+| `.github/workflows/prune.yml`     | `20 18 * * *` UTC + manual  | `/api/checks/prune` |
+
+`monitor` lost its schedule because GitHub's scheduler is best-effort: it fired
+only a few times a day. Use "Run workflow" for a one-off check run. Both
+workflows fail on a non-2xx response, so a broken endpoint shows up in the
+Actions tab. The staleness threshold stays at 15 minutes (three missed runs).
 
 ---
 

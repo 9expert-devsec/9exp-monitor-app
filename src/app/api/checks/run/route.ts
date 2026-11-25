@@ -2,9 +2,12 @@ import { hasValidCronSecret } from '@/lib/auth'
 import { runChecks } from '@/lib/checker'
 
 /**
- * Worst case for a single site is 10s + 2s retry delay + 10s = 22s, and sites
- * run fully in parallel, so the run is bounded by the slowest site rather than
- * by how many are registered. 60s leaves room for the DB writes on top.
+ * Worst case for a single site is the page check, its retry and the optional
+ * health call: 10s + 2s + 10s + 10s = 32s. Sites run fully in parallel, so the
+ * run is bounded by the slowest site rather than by how many are registered.
+ * The checker stops itself at 45s (RUN_DEADLINE_MS in src/lib/checker.ts) so it
+ * can still record and answer; 60s leaves room for the DB writes on top. The
+ * pg_cron caller waits 65s before giving up.
  */
 export const maxDuration = 60
 

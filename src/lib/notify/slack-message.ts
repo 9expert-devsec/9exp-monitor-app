@@ -137,7 +137,7 @@ export function buildMessage(event: NotifyEvent): SlackMessageModel {
         title,
         lines: [
           event.lastResultAt ? `Last result at ${clock(event.lastResultAt)}` : 'No result has ever been recorded',
-          'GitHub Actions (workflow "monitor") may have stopped.',
+          'The Supabase cron job "monitor-checker" may have stopped.',
         ],
         link: { label: 'Open dashboard →', path: '/' },
         fallback: title,

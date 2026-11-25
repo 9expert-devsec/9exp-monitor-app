@@ -3,9 +3,10 @@ import { runWatchdog } from '@/lib/notify/engine'
 
 /**
  * "Checker stopped" watchdog. The checker cannot report its own absence, so
- * this must be called by a scheduler that does NOT depend on the checker's
- * (GitHub Actions) — see README → Notifications. Protected by CRON_SECRET,
- * idempotent: one Slack post per stall however often it is called.
+ * this is called by its own Supabase pg_cron job, `monitor-watchdog`, separate
+ * from the checker's job, `monitor-checker` — see README → Scheduled jobs.
+ * Protected by CRON_SECRET, idempotent: one Slack post per stall however often
+ * it is called.
  */
 export const dynamic = 'force-dynamic'
 

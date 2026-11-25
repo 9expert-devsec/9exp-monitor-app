@@ -267,7 +267,7 @@ export function NotificationsForm({ settings }: { settings: PublicNotificationSe
                 onChange={(event) => setStalledMinutes(event.target.value)}
                 className={SMALL_INPUT}
               />
-              + min (GitHub Actions may have stopped)
+              + min (the Supabase cron job may have stopped)
             </span>
           }
           checked={ruleStalled}
