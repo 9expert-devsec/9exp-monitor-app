@@ -315,7 +315,7 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
             <div className="relative flex min-w-0 items-center" style={{ gap: u(20) }}>
               <Dot status={bannerStatus} size={u(36)} />
               <div className="min-w-0">
-                <p key={headline} className="tv-fade-in truncate leading-tight font-bold" style={{ fontSize: u(34) }}>
+                <p key={headline} className="tv-fade-in font-heading truncate leading-tight font-bold" style={{ fontSize: u(34) }}>
                   {headline}
                 </p>
                 <p className="truncate font-sans text-(--text-secondary)" style={{ fontSize: u(16), marginTop: u(4) }} title={summary}>
@@ -539,7 +539,7 @@ function Tile({
       <div className="relative flex min-w-0 items-center justify-between" style={{ gap: u(12, true) }}>
         <div className="flex min-w-0 items-center" style={{ gap: u(10, true) }}>
           <Dot status={status} size={u(18, true)} />
-          <h2 className="truncate leading-tight font-semibold" style={{ fontSize: u(24, true) }} title={site.name}>
+          <h2 className="font-heading truncate leading-tight font-semibold" style={{ fontSize: u(24, true) }} title={site.name}>
             {site.name}
           </h2>
         </div>

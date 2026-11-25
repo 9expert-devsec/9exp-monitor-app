@@ -237,18 +237,26 @@ it has stopped checking is worse than no monitor at all.
 
 ## Typography
 
-The brand face is **LINE Seed Sans TH**. Its files are licensed per-project and
-are not committed. To enable it, drop these into `public/fonts/`:
+Two self-hosted families, the same as genesis-lab, declared with
+`next/font/local` in `src/app/layout.tsx`. The files live in `src/fonts/` and
+**are committed** — `next/font/local` fails the build when they are missing.
 
-```
-public/fonts/LINESeedSansTH_W_Rg.woff2    (400)
-public/fonts/LINESeedSansTH_W_Bd.woff2    (700)
-public/fonts/LINESeedSansTH_W_XBd.woff2   (800)
-```
+| Variable      | Family            | Files                                                        | Used for                         |
+| ------------- | ----------------- | ------------------------------------------------------------ | -------------------------------- |
+| `--font-en`   | Google Sans       | `GoogleSans-Latin-wght.woff2` (variable, wght 400–700, Latin) | Body, detail, English, numbers   |
+| `--font-thai` | LINE Seed Sans TH | `LINESeedSansTH_W_Rg` / `_Bd` / `_He` / `_XBd` `.woff2` (400 / 700 / 800 / 900) | Thai text, headings |
 
-`src/app/globals.css` already declares the `@font-face` rules. Until the files
-are present the fallback stack (Noto Sans Thai → system sans) renders correctly
-in both Thai and Latin.
+Google Sans is the SIL OFL release; the licence is `src/fonts/OFL.txt`.
+
+In `src/app/globals.css` (`@theme`):
+
+- `--font-sans` = Google Sans, then LINE Seed Sans TH — Thai glyphs fall through
+  to LINE Seed.
+- `--font-heading` = LINE Seed Sans TH first — `h1`–`h3`, the TV banner headline
+  and the TV tile site names.
+- `--font-mono` = Google Sans too. There is no monospace family; numbers that
+  tick or sit in a column (`font-mono`, `.tv-num`) use Google Sans's tabular
+  figures (`font-variant-numeric: tabular-nums`) so digits don't jitter.
 
 ---
 
@@ -416,9 +424,9 @@ Places where this deviates from, or resolves ambiguity in, the original spec:
    bucketed in Postgres by `site_response_series()`, so a 30-day window arrives
    as a few hundred points rather than ~8,600 rows.
 
-9. **LINE Seed Sans TH via `@font-face`, not `next/font/local`.** The latter
-   fails the build outright when the font files are absent, and they are
-   licensed per-project. See [Typography](#typography).
+9. **Fonts via `next/font/local`, files committed.** Google Sans and LINE Seed
+   Sans TH are self-hosted from `src/fonts/`, like genesis-lab. See
+   [Typography](#typography).
 
 10. **`incidents` gets `REPLICA IDENTITY FULL`.** Without it, the UPDATE that
     sets `resolved_at` replicates only the primary key and the dashboard cannot

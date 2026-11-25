@@ -1,40 +1,16 @@
 @import "tailwindcss";
 
-/*
- * LINE Seed Sans TH.
- *
- * The font is licensed per-project, so the .woff2 files are not committed.
- * Drop them into /public/fonts (see README → Typography) and this picks them up;
- * until then the fallback stack below renders Thai and Latin correctly, just not
- * in the brand face. Declared as plain @font-face rather than next/font/local
- * because the latter fails the build outright when the files are absent.
- */
-@font-face {
-  font-family: "LINE Seed Sans TH";
-  src: url("/fonts/LINESeedSansTH_W_Rg.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "LINE Seed Sans TH";
-  src: url("/fonts/LINESeedSansTH_W_Bd.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "LINE Seed Sans TH";
-  src: url("/fonts/LINESeedSansTH_W_XBd.woff2") format("woff2");
-  font-weight: 800;
-  font-style: normal;
-  font-display: swap;
-}
-
 @theme {
-  --font-sans: "LINE Seed Sans TH", "Noto Sans Thai", "IBM Plex Sans Thai",
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, monospace;
+  /*
+   * Self-hosted with next/font/local in src/app/layout.tsx (files in src/fonts/).
+   * Google Sans first; Thai glyphs fall through to LINE Seed Sans TH, as on genesis.
+   * Google Sans has no mono cut, but it has OpenType `tnum`: the "mono" role is
+   * Google Sans with tabular figures (see the base rule below), so ticking and
+   * column numbers don't jitter.
+   */
+  --font-sans: var(--font-en), var(--font-thai), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-thai), var(--font-en), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-en), var(--font-thai), ui-sans-serif, system-ui, sans-serif;
 
   /* Radii — rounded-sm / rounded-md / rounded-lg / rounded-pill */
   --radius-sm: 6px;
@@ -92,6 +68,21 @@ body {
   color: var(--text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-heading);
+  }
+  /* The numeric role: equal-width digits wherever a number ticks or sits in a column. */
+  .font-mono,
+  code,
+  kbd,
+  samp {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 :focus-visible {
