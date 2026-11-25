@@ -191,6 +191,22 @@
   to { opacity: 0; }
 }
 
+/*
+ * Tile primary value ("1,620 ms", "Down 1h 05m 04s"): its designed size
+ * (--primary-size), shrunk only when the text would not fit the width beside
+ * the uptime block. --chars comes from the text (primaryChars), so a ticking
+ * timer only changes size when the hours gain a digit. --em-per-char is
+ * measured, not guessed: Google Sans wght 700 with tnum, widest of the long
+ * values ("Down 12m 04s" 0.5983 em/char) + 3 %.
+ */
+.tv-primary-box {
+  container-type: inline-size;
+}
+.tv-fit {
+  --em-per-char: 0.617;
+  font-size: min(var(--primary-size), calc(100cqi / (var(--chars, 5) * var(--em-per-char))));
+}
+
 /* Takes all spare height in the tile — and gives it up first when the tile is short. */
 .tv-spark-wrap {
   position: relative;

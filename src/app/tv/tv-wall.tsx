@@ -32,7 +32,16 @@ import { StatusHeatmap, type HeatRow } from '@/components/tv/status-heatmap'
 import { hostOf } from '@/lib/format'
 import { CHECKER_NEVER_RAN_MESSAGE, CHECKER_STALLED_MESSAGE } from '@/lib/messages'
 import { STATUS_COLOR, STATUS_LABEL, STATUS_SOFT, displayStatusOf, isStale } from '@/lib/status'
-import { checkerStateAt, feedText, gridSizes, orderForTv, shortDuration, type TvEntry, type TvLayout } from '@/lib/tv'
+import {
+  checkerStateAt,
+  feedText,
+  gridSizes,
+  orderForTv,
+  primaryChars,
+  shortDuration,
+  type TvEntry,
+  type TvLayout,
+} from '@/lib/tv'
 import type { TvData } from '@/lib/tv-data'
 import type { DisplayStatus } from '@/lib/types'
 
@@ -559,18 +568,24 @@ function Tile({
 
   let primary: React.ReactNode
   let secondary: { text: string; mono: boolean } | null
+  // Every primary value is a .tv-fit span: designed size, shrunk only when it would not fit (tv.css).
+  const fixed = (text: string) => (
+    <span className="tv-fit" style={{ '--chars': primaryChars(text) } as CSSProperties}>
+      {text}
+    </span>
+  )
   if (status === 'down') {
-    primary = openIncident ? <DownTimer since={openIncident.started_at} /> : 'Down'
+    primary = openIncident ? <DownTimer since={openIncident.started_at} className="tv-fit" /> : fixed('Down')
     secondary = message ? { text: message.text, mono: message.kind === 'raw' } : null
   } else if (status === 'degraded') {
-    primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" />
+    primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" className="tv-fit" />
     const forHow = degradedSince ? ` · ${shortDuration(now - Date.parse(degradedSince))}` : ''
     secondary = message ? { text: `${message.text}${forHow}`, mono: message.kind === 'raw' } : null
   } else if (status === 'up') {
-    primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" />
+    primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" className="tv-fit" />
     secondary = { text: hostOf(site.url), mono: true }
   } else {
-    primary = '—'
+    primary = fixed('—')
     secondary = message ? { text: message.text, mono: false } : null
   }
 
@@ -596,10 +611,17 @@ function Tile({
       </div>
 
       <div className="relative flex min-w-0 items-end justify-between" style={{ gap: u(16, true) }}>
-        <div className="min-w-0">
+        {/* Size container: 100cqi = the width left beside the uptime block. */}
+        <div className="tv-primary-box min-w-0 flex-1">
           <p
             className="tv-num truncate leading-none font-bold"
-            style={{ fontSize: u(40, true), color: status === 'down' ? 'var(--status-down)' : status === 'degraded' ? 'var(--status-degraded)' : undefined }}
+            style={
+              {
+                '--primary-size': u(40, true),
+                fontSize: u(40, true),
+                color: status === 'down' ? 'var(--status-down)' : status === 'degraded' ? 'var(--status-degraded)' : undefined,
+              } as CSSProperties
+            }
           >
             {primary}
           </p>

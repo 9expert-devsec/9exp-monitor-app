@@ -10,6 +10,7 @@ import {
   feedText,
   groupedMs,
   planSparkline,
+  primaryChars,
   thresholdMode,
   ticking,
   type FeedItem,
@@ -183,9 +184,11 @@ export function Countdown({ lastRunAt, variant = 'ring' }: { lastRunAt: string |
 
 export function DownTimer({ since, style, className }: { since: string; style?: CSSProperties; className?: string }) {
   const now = useSecond()
+  const text = now === null ? 'Down' : `Down ${ticking(now - Date.parse(since))}`
+  // --chars changes only when the hours part gains a digit, so the fitted size never jitters.
   return (
-    <span className={className} style={style}>
-      {now === null ? 'Down' : `Down ${ticking(now - Date.parse(since))}`}
+    <span className={className} style={{ ...style, '--chars': primaryChars(text) } as CSSProperties}>
+      {text}
     </span>
   )
 }
@@ -233,7 +236,10 @@ export function TweenNumber({
     const step = (time: number) => {
       const k = Math.min(1, (time - started) / 500)
       const eased = 1 - Math.pow(1 - k, 3)
-      node.nodeValue = formatAs(format, from + (value - from) * eased)
+      const text = formatAs(format, from + (value - from) * eased)
+      node.nodeValue = text
+      // Keep a fitted value (.tv-fit) fitting mid-tween, e.g. 1,620 → 980 passes through 4-digit values.
+      element.style.setProperty('--chars', String(primaryChars(text)))
       if (k < 1) frame = requestAnimationFrame(step)
     }
     frame = requestAnimationFrame(step)
@@ -243,11 +249,16 @@ export function TweenNumber({
     return () => {
       cancelAnimationFrame(frame)
       node.nodeValue = formatAs(format, value)
+      element.style.setProperty('--chars', String(primaryChars(formatAs(format, value))))
     }
   }, [value, format])
 
   return (
-    <span ref={ref} className={`tv-num ${className ?? ''}`} style={style}>
+    <span
+      ref={ref}
+      className={`tv-num ${className ?? ''}`}
+      style={{ ...style, '--chars': primaryChars(formatAs(format, value)) } as CSSProperties}
+    >
       {formatAs(format, value)}
     </span>
   )

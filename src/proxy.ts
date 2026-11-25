@@ -99,8 +99,7 @@ export const config = {
      * - /_next/static, /_next/image       — build output
      * - /icon.png, /apple-icon.png        — favicon and touch icon
      * - /logo.png                         — the login card's logo
-     * - /fonts/*                          — the brand font the login page uses
      */
-    '/((?!api/checks/run|api/checks/prune|api/cron/watchdog|_next/static|_next/image|icon\\.png|apple-icon\\.png|logo\\.png|fonts/).*)',
+    '/((?!api/checks/run|api/checks/prune|api/cron/watchdog|_next/static|_next/image|icon\\.png|apple-icon\\.png|logo\\.png).*)',
   ],
 }

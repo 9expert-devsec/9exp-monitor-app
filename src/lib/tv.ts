@@ -243,6 +243,16 @@ export function ticking(ms: number): string {
   return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m ${ss}s` : `${m}m ${ss}s`
 }
 
+/**
+ * Width budget, in characters, of a tile's primary value — drives `--chars`
+ * (tv.css `.tv-fit`). At least 5: the short values ("Down", "—", "75 ms") are
+ * wider per character than the --em-per-char budget, which is measured on the
+ * long ones.
+ */
+export function primaryChars(text: string): number {
+  return Math.max(5, text.length)
+}
+
 export function groupedMs(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : `${Math.round(value).toLocaleString('en-US')} ms`
 }
