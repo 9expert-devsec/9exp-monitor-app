@@ -233,7 +233,7 @@ export async function saveSiteOrderAction(groups: GroupOrder[]): Promise<SimpleR
   const seenGroups = new Set<string>()
 
   for (const { group, ids } of groups) {
-    const groupKey = group ?? ' none'
+    const groupKey = group ?? '\u0000none'
     if (seenGroups.has(groupKey)) return { ok: false, error: 'A group was sent twice.' }
     seenGroups.add(groupKey)
 
