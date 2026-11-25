@@ -1,103 +1,77 @@
 'use client'
 
-import { Maximize, Minimize, WifiOff } from 'lucide-react'
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { Maximize, Minimize } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+
+import './tv.css'
 
 import { refreshTvAction } from '@/app/tv/actions'
+import {
+  Clock,
+  Countdown,
+  DownTimer,
+  FeedList,
+  LivePill,
+  LogoPulse,
+  Sparkline,
+  Ticker,
+  TweenNumber,
+  clockText,
+  prefersReducedMotion,
+  u,
+  useMinute,
+  type LiveState,
+} from '@/app/tv/tv-parts'
 import { HistoryBar } from '@/components/history-bar'
-import { Logo } from '@/components/logo'
 import { headlineFor, worstStatus, type StatusCounts } from '@/components/overall-status-card'
 import { messageFor } from '@/components/site-card'
 import { StatusDot } from '@/components/status-dot'
-import type { DashboardData } from '@/lib/dashboard'
-import { formatDuration, formatPercent, hostOf } from '@/lib/format'
+import { hostOf } from '@/lib/format'
 import { CHECKER_NEVER_RAN_MESSAGE, CHECKER_STALLED_MESSAGE } from '@/lib/messages'
-import { STATUS_COLOR, STATUS_LABEL, displayStatusOf, isStale } from '@/lib/status'
-import { gridFor, orderForTv, type TvEntry } from '@/lib/tv'
+import { STATUS_COLOR, STATUS_LABEL, STATUS_SOFT, displayStatusOf, isStale } from '@/lib/status'
+import { checkerStateAt, gridSizes, orderForTv, shortDuration, type TvEntry, type TvLayout } from '@/lib/tv'
+import type { TvData } from '@/lib/tv-data'
 import type { DisplayStatus } from '@/lib/types'
 
 const REFRESH_MS = 30_000
 /** Long-running kiosk browsers leak; a full reload every 6 hours sheds that. */
 const FULL_RELOAD_MS = 6 * 60 * 60 * 1000
 const IDLE_MS = 5_000
-const TIME_ZONE = 'Asia/Bangkok'
 const LEGEND: DisplayStatus[] = ['up', 'degraded', 'down', 'stale']
+const LIME = 'var(--brand-signal-lime)'
 
-/**
- * A length that scales with the screen. Designed at 1920 × 1080: `u(24)` is
- * 24 px there, 48 px at 3840 × 2160 and ~17 px at 1366 × 768 — whichever of
- * width or height is tighter wins, so it never overflows a non-16:9 screen.
- * Tile text is multiplied by --tv-scale, which shrinks as the grid gets denser.
- */
-function u(px: number, scaled = false): string {
-  const base = `min(${(px / 19.2).toFixed(3)}vw, ${(px / 10.8).toFixed(3)}vh)`
-  return scaled ? `calc(${base} * var(--tv-scale, 1))` : base
-}
+type Change = { ids: ReadonlySet<string>; generation: number }
+const NO_CHANGE: Change = { ids: new Set(), generation: 0 }
 
-// --- clock: one tick per second, client only (no hydration mismatch) ---------
-function subscribeToSeconds(onTick: () => void) {
-  const timer = setInterval(onTick, 1000)
-  return () => clearInterval(timer)
-}
-const currentSecond = () => Math.floor(Date.now() / 1000)
-const noSecondOnServer = () => null
-
-function clockText(ms: number): string {
-  return new Date(ms).toLocaleTimeString('en-GB', { timeZone: TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: false })
-}
-
-/** "Tue, Nov 24 2026" in Bangkok time. */
-function dateText(ms: number): string {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-      .formatToParts(new Date(ms))
-      .map((part) => [part.type, part.value]),
-  )
-  return `${parts.weekday}, ${parts.month} ${parts.day} ${parts.year}`
-}
-
-function ms(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : `${Math.round(value).toLocaleString('en-US')} ms`
-}
-
-const TONE: Record<DisplayStatus, { border: string; background: string; glow?: string }> = {
-  down: { border: 'var(--status-down)', background: 'var(--status-down-soft)', glow: '0 0 0 1px var(--status-down), 0 0 32px -8px var(--status-down)' },
-  degraded: { border: 'var(--status-degraded)', background: 'var(--status-degraded-soft)', glow: '0 0 24px -10px var(--status-degraded)' },
-  up: { border: 'color-mix(in srgb, var(--status-up) 45%, transparent)', background: 'var(--status-up-soft)' },
-  stale: { border: 'var(--status-stale)', background: 'var(--status-stale-soft)' },
-}
-
-function Dot({ status, px, scaled = false }: { status: DisplayStatus; px: number; scaled?: boolean }) {
+function Dot({ status, size }: { status: DisplayStatus; size: string }) {
   return (
-    <span className="inline-flex shrink-0 [&>svg]:size-full" style={{ width: u(px, scaled), height: u(px, scaled) }}>
+    <span className="inline-flex shrink-0 [&>svg]:size-full" style={{ width: size, height: size }}>
       <StatusDot status={status} decorative />
     </span>
   )
 }
 
-export interface TvInitial {
-  snapshots: DashboardData['snapshots']
-  lastRunAt: string | null
-  renderedAt: string
-}
-
 /**
- * The wall display. Refreshes its data every 30 s through a Server Action (the
- * same `getDashboardData()` as the overview) and keeps the last good data on
- * screen when a refresh fails. Runs unattended: keeps the screen awake, hides
- * the cursor when idle, reloads itself every 6 hours.
+ * TV wall v2. One page for every screen: CSS picks the layout (tv.css). Data
+ * refreshes every 30 s through a Server Action; the last good data stays on
+ * screen when a refresh fails. Ticking values re-render only themselves; all
+ * loops are CSS or the Web Animations API.
  */
-export function TvWall({ initial, autoRefresh = true }: { initial: TvInitial; autoRefresh?: boolean }) {
+export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoRefresh?: boolean }) {
   const [data, setData] = useState(initial)
   const [connectionLost, setConnectionLost] = useState(false)
+  const [flash, setFlash] = useState<Change>(NO_CHANGE)
+  const [feedChange, setFeedChange] = useState<Change>(NO_CHANGE)
   const [pointerActive, setPointerActive] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const shiftRef = useRef<HTMLDivElement>(null)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const dataRef = useRef(initial)
 
-  const second = useSyncExternalStore(subscribeToSeconds, currentSecond, noSecondOnServer)
-  const now = second !== null ? second * 1000 : Date.parse(data.renderedAt)
+  const now = useMinute(data.renderedAt)
 
-  // Data refresh, every 30 s. A failure keeps the last data and shows a note.
+  // --- 30 s refresh; work out which tiles got a new check (M5) and which feed rows are new (M10).
   useEffect(() => {
     if (!autoRefresh) return
     let cancelled = false
@@ -105,15 +79,26 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvInitial; au
       try {
         const result = await refreshTvAction()
         if (cancelled) return
-        if (result.ok) {
-          setData({ snapshots: result.data.snapshots, lastRunAt: result.data.lastRunAt, renderedAt: result.data.renderedAt })
-          setConnectionLost(false)
-        } else if (result.reason === 'signed_out') {
-          // Let the proxy send the browser to /login rather than showing stale data forever.
-          window.location.reload()
-        } else {
-          setConnectionLost(true)
+        if (!result.ok) {
+          if (result.reason === 'signed_out') window.location.reload()
+          else setConnectionLost(true)
+          return
         }
+        const previous = dataRef.current
+        const next = result.data
+        const before = new Map(previous.snapshots.map((s) => [s.site.id, s.latest?.checked_at ?? null]))
+        const checked = new Set(
+          next.snapshots
+            .filter((s) => (s.latest?.checked_at ?? null) !== (before.get(s.site.id) ?? null))
+            .map((s) => s.site.id),
+        )
+        const known = new Set(previous.feed.map((item) => item.id))
+        const fresh = new Set(next.feed.filter((item) => !known.has(item.id)).map((item) => item.id))
+        dataRef.current = next
+        setData(next)
+        setConnectionLost(false)
+        if (checked.size > 0) setFlash((f) => ({ ids: checked, generation: f.generation + 1 }))
+        if (fresh.size > 0) setFeedChange((f) => ({ ids: fresh, generation: f.generation + 1 }))
       } catch {
         if (!cancelled) setConnectionLost(true)
       }
@@ -124,30 +109,45 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvInitial; au
     }
   }, [autoRefresh])
 
-  // Full reload every 6 hours.
+  // --- 6 h full reload.
   useEffect(() => {
     if (!autoRefresh) return
     const timer = setTimeout(() => window.location.reload(), FULL_RELOAD_MS)
     return () => clearTimeout(timer)
   }, [autoRefresh])
 
-  // Keep the screen awake where the Wake Lock API exists; re-acquire when the tab is shown again.
+  // --- Wake Lock, re-acquired when the tab is shown again; loops pause while hidden.
   useEffect(() => {
-    if (!('wakeLock' in navigator)) return
     let lock: WakeLockSentinel | null = null
-    const acquire = async () => {
+    const onVisibility = async () => {
+      rootRef.current?.classList.toggle('tv-paused', document.hidden)
+      if (document.hidden || !('wakeLock' in navigator)) return
       try {
-        if (document.visibilityState === 'visible') lock = await navigator.wakeLock.request('screen')
+        lock = await navigator.wakeLock.request('screen')
       } catch {
         // Unsupported, denied or battery saver: ignore silently.
       }
     }
-    void acquire()
-    document.addEventListener('visibilitychange', acquire)
+    void onVisibility()
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      document.removeEventListener('visibilitychange', acquire)
+      document.removeEventListener('visibilitychange', onVisibility)
       void lock?.release().catch(() => {})
     }
+  }, [])
+
+  // --- M12 burn-in guard: every 10 min glide up to 4 px; back to 0 on each full hour. Not on mobile.
+  useEffect(() => {
+    const apply = () => {
+      const element = shiftRef.current
+      if (!element || window.matchMedia('(max-width: 639px)').matches) return
+      const minute = new Date().getMinutes()
+      if (minute % 10 !== 0) return
+      const offset = () => Math.round((Math.random() * 2 - 1) * 4)
+      element.style.transform = minute === 0 ? 'translate(0, 0)' : `translate(${offset()}px, ${offset()}px)`
+    }
+    const timer = setInterval(apply, 60_000)
+    return () => clearInterval(timer)
   }, [])
 
   useEffect(() => {
@@ -170,163 +170,359 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvInitial; au
     else void document.documentElement.requestFullscreen?.().catch(() => {})
   }
 
-  // --- derive ---------------------------------------------------------------------
-  const entries: TvEntry[] = data.snapshots.map((snapshot) => ({
-    snapshot,
-    status: displayStatusOf(snapshot.latest, now),
-  }))
+  // --- derive ----------------------------------------------------------------------
+  const entries: TvEntry[] = data.snapshots.map((snapshot) => ({ snapshot, status: displayStatusOf(snapshot.latest, now) }))
   const counts: StatusCounts = { up: 0, degraded: 0, down: 0, stale: 0 }
   for (const entry of entries) counts[entry.status] += 1
   const total = entries.length
   const ordered = orderForTv(entries)
-  const grid = gridFor(total)
 
-  const checkerStalled = isStale(data.lastRunAt, now)
-  const bannerStatus: DisplayStatus = checkerStalled ? 'stale' : worstStatus(counts, total)
-  const headline = checkerStalled ? 'No recent data' : headlineFor(counts, total)
-  const banner = TONE[bannerStatus]
+  const stalled = isStale(data.lastRunAt, now)
+  const bannerStatus: DisplayStatus = stalled ? 'stale' : worstStatus(counts, total)
+  const headline = stalled ? 'No recent data' : headlineFor(counts, total)
+  const issues = ordered
+    .filter((entry) => entry.status === 'down' || entry.status === 'degraded')
+    .map(({ snapshot, status }) => {
+      const since = status === 'down' ? snapshot.openIncident?.started_at : data.degradedSince[snapshot.site.id]
+      const verb = status === 'down' ? 'down' : 'slow'
+      return since ? `${snapshot.site.name} ${verb} for ${shortDuration(now - Date.parse(since))}` : `${snapshot.site.name} ${verb}`
+    })
+  const summary = stalled
+    ? data.lastRunAt === null
+      ? CHECKER_NEVER_RAN_MESSAGE
+      : CHECKER_STALLED_MESSAGE
+    : issues.length > 0
+      ? issues.slice(0, 3).join(' · ') + (issues.length > 3 ? ` · +${issues.length - 3} more` : '')
+      : 'Every site answered within its threshold'
+
+  const liveState: LiveState = connectionLost ? 'reconnecting' : stalled ? 'stale' : 'live'
+  const logoMood = stalled ? 'stale' : counts.down > 0 ? 'down' : 'normal'
+  const checker = checkerStateAt(now, data.lastRunAt)
+  const checkerText = {
+    healthy: `Checker healthy · last run ${data.lastRunAt ? clockText(Date.parse(data.lastRunAt)) : '—'} · ${data.lastRunChecked}/${total}`,
+    late: `Checker late · last run ${data.lastRunAt ? clockText(Date.parse(data.lastRunAt)) : '—'}`,
+    stopped: `Checker stopped · last run ${data.lastRunAt ? clockText(Date.parse(data.lastRunAt)) : 'never'}`,
+  }[checker]
+  const checkerColor = { healthy: 'var(--status-up)', late: 'var(--status-degraded)', stopped: 'var(--status-down)' }[checker]
+
+  const sizes = gridSizes(total)
+  const gridVars = Object.fromEntries(
+    (Object.keys(sizes) as TvLayout[]).flatMap((layout) => {
+      const key = layout === 'ultrawide' ? 'uw' : layout
+      return [
+        [`--cols-${key}`, sizes[layout].columns],
+        [`--rows-${key}`, sizes[layout].rows],
+        [`--scale-${key}`, sizes[layout].scale],
+      ]
+    }),
+  ) as CSSProperties
+
+  const avgDelta =
+    data.today.avgMs !== null && data.today.avgMsYesterday
+      ? Math.round(((data.today.avgMs - data.today.avgMsYesterday) / data.today.avgMsYesterday) * 100)
+      : null
+  const needAttention = total - counts.up
+  const stats: { label: string; value: React.ReactNode; delta: string; color: string }[] = [
+    {
+      label: 'Sites up',
+      value: (
+        <>
+          <TweenNumber value={counts.up} format="int" /> / {total}
+        </>
+      ),
+      delta: needAttention > 0 ? `${needAttention} need attention` : 'All good',
+      color: needAttention > 0 ? (counts.down > 0 ? 'var(--status-down)' : 'var(--status-degraded)') : 'var(--status-up)',
+    },
+    {
+      label: 'Avg response',
+      value: <TweenNumber value={data.today.avgMs} format="ms" />,
+      delta: avgDelta === null ? 'No data yesterday' : avgDelta === 0 ? 'Same as yesterday' : `${avgDelta < 0 ? '▼' : '▲'} ${Math.abs(avgDelta)}% vs yesterday`,
+      color: avgDelta === null || avgDelta === 0 ? 'var(--text-muted)' : avgDelta < 0 ? 'var(--status-up)' : 'var(--status-degraded)',
+    },
+    {
+      label: 'Uptime today',
+      value: <TweenNumber value={data.today.uptimeToday} format="pct" />,
+      delta: `30d · ${data.today.uptime30d === null ? '—' : `${data.today.uptime30d >= 100 ? '100' : data.today.uptime30d.toFixed(2)}%`}`,
+      color: 'var(--text-muted)',
+    },
+    {
+      label: 'Incidents today',
+      value: <TweenNumber value={data.today.incidentsToday} format="int" />,
+      delta: data.today.incidentsOpen > 0 ? `${data.today.incidentsOpen} open` : 'None open',
+      color: data.today.incidentsOpen > 0 ? 'var(--status-down)' : 'var(--status-up)',
+    },
+  ]
 
   return (
-    <div
-      onPointerMove={onPointerMove}
-      className={`fixed inset-0 flex flex-col overflow-hidden bg-(--surface-page) text-(--text-primary) ${
-        pointerActive ? '' : 'cursor-none'
-      }`}
-      style={{ padding: u(48), gap: u(24) }}
-    >
-      {/* Top bar */}
-      <header className="flex shrink-0 items-center justify-between" style={{ gap: u(24) }}>
-        <div className="flex min-w-0 items-center" style={{ gap: u(20) }}>
-          <Logo size={104} style={{ width: u(52), height: u(52) }} />
-          <div className="min-w-0">
-            <h1 className="truncate leading-tight font-bold" style={{ fontSize: u(40) }}>
-              9Expert System Status
-            </h1>
-            <p className="flex items-center text-(--text-secondary)" style={{ fontSize: u(18), gap: u(12) }}>
-              <span className="truncate">
-                Auto-refresh · checks every 5 min · last run{' '}
-                <span className="font-mono">{data.lastRunAt ? clockText(Date.parse(data.lastRunAt)) : 'never'}</span>
-              </span>
-              {connectionLost && (
-                <span
-                  role="status"
-                  className="inline-flex shrink-0 items-center rounded-pill bg-(--status-degraded-soft) text-(--status-degraded)"
-                  style={{ gap: u(6), padding: `${u(2)} ${u(10)}` }}
-                >
-                  <WifiOff aria-hidden="true" style={{ width: u(16), height: u(16) }} />
-                  Connection lost — retrying
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="font-mono leading-none font-bold tabular-nums" style={{ fontSize: u(56) }}>
-            {second !== null ? clockText(now) : '--:--'}
-          </p>
-          <p className="text-(--text-secondary)" style={{ fontSize: u(18), marginTop: u(6) }}>
-            {second !== null ? dateText(now) : ' '}
-          </p>
-        </div>
-      </header>
-
-      {/* Banner */}
-      <section
-        aria-label="Overall status"
-        className="flex shrink-0 items-center justify-between rounded-lg border-2"
-        style={{ borderColor: banner.border, background: banner.background, minHeight: u(104), padding: `${u(16)} ${u(32)}`, gap: u(24) }}
+    <>
+      <div
+        ref={rootRef}
+        className={`tv-root ${pointerActive ? '' : 'tv-hide-cursor'}`}
+        onPointerMove={onPointerMove}
       >
-        <div className="flex min-w-0 items-center" style={{ gap: u(20) }}>
-          <Dot status={bannerStatus} px={40} />
-          <div className="min-w-0">
-            <p className="truncate leading-tight font-bold" style={{ fontSize: u(36) }}>
-              {headline}
-            </p>
-            {checkerStalled && (
-              <p className="truncate font-sans text-(--text-secondary)" style={{ fontSize: u(18) }}>
-                {data.lastRunAt === null ? CHECKER_NEVER_RAN_MESSAGE : CHECKER_STALLED_MESSAGE}
+        <div ref={shiftRef} className="tv-shift">
+          {/* Top bar */}
+          <header className="tv-top flex min-w-0 items-center justify-between" style={{ gap: u(24) }}>
+            <div className="flex min-w-0 items-center" style={{ gap: u(16) }}>
+              <LogoPulse mood={logoMood} size={u(44)} />
+              <div className="min-w-0">
+                <h1 className="tv-title truncate leading-tight font-bold" style={{ fontSize: u(34) }}>
+                  9Expert System Status
+                </h1>
+                <p className="tv-subtitle truncate text-(--text-secondary)" style={{ fontSize: u(16) }}>
+                  Realtime · {total} {total === 1 ? 'site' : 'sites'} · checked every 5 min by pg_cron
+                  <span className="tv-show-laptop" style={{ color: checkerColor }}>
+                    {' · '}
+                    {checkerText}
+                  </span>
+                </p>
+              </div>
+            </div>
+            <div className="tv-right flex shrink-0 items-center" style={{ gap: u(28) }}>
+              <LivePill state={liveState} />
+              <Countdown lastRunAt={data.lastRunAt} />
+              <Clock />
+              {/* Own slot in the top bar, so it never covers the legend; shown only while the mouse moves. */}
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                className="inline-flex items-center justify-center rounded-md border border-(--border-strong) bg-(--surface-raised) text-(--text-primary)"
+                style={{ width: u(40), height: u(40), visibility: pointerActive ? 'visible' : 'hidden' }}
+              >
+                {fullscreen ? (
+                  <Minimize aria-hidden="true" style={{ width: u(18), height: u(18) }} />
+                ) : (
+                  <Maximize aria-hidden="true" style={{ width: u(18), height: u(18) }} />
+                )}
+              </button>
+            </div>
+          </header>
+
+          {/* Banner */}
+          <section aria-label="Overall status" className="tv-banner">
+            {(['down', 'degraded', 'up', 'stale'] as DisplayStatus[]).map((tone) => (
+              <span
+                key={tone}
+                className="tv-tone"
+                data-on={tone === bannerStatus}
+                style={{
+                  background: STATUS_SOFT[tone],
+                  borderColor: tone === 'up' ? 'color-mix(in srgb, var(--status-up) 40%, transparent)' : STATUS_COLOR[tone],
+                }}
+              />
+            ))}
+            <div className="relative flex min-w-0 items-center" style={{ gap: u(20) }}>
+              <Dot status={bannerStatus} size={u(36)} />
+              <div className="min-w-0">
+                <p key={headline} className="tv-fade-in truncate leading-tight font-bold" style={{ fontSize: u(34) }}>
+                  {headline}
+                </p>
+                <p className="truncate font-sans text-(--text-secondary)" style={{ fontSize: u(16), marginTop: u(4) }} title={summary}>
+                  {summary}
+                </p>
+              </div>
+            </div>
+            <dl className="tv-stats relative">
+              {stats.map((stat) => (
+                <div key={stat.label} className="min-w-0">
+                  <dt className="font-semibold tracking-wider text-(--text-muted) uppercase" style={{ fontSize: u(12) }}>
+                    {stat.label}
+                  </dt>
+                  <dd className="tv-num leading-tight font-bold whitespace-nowrap" style={{ fontSize: u(30) }}>
+                    {stat.value}
+                  </dd>
+                  <dd className="truncate" style={{ fontSize: u(13), color: stat.color }}>
+                    {stat.delta}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          {/* Grid + rail */}
+          <div className="tv-main">
+            <TileGrid entries={ordered} data={data} now={now} flash={flash} style={gridVars} />
+
+            <aside className="tv-rail" aria-label="Incidents">
+              <div className="flex items-baseline justify-between">
+                <h2 className="font-semibold" style={{ fontSize: u(20) }}>
+                  Incidents
+                </h2>
+                <span className="text-(--text-muted)" style={{ fontSize: u(14) }}>
+                  Last 24h
+                </span>
+              </div>
+              <FeedList items={data.feed} newIds={feedChange.ids} generation={feedChange.generation} rowHeight={u(40)} />
+              <div className="tv-rail-chart flex flex-col border-t border-(--border-subtle)" style={{ paddingTop: u(14), gap: u(8) }}>
+                <div className="flex items-baseline justify-between" style={{ fontSize: u(14) }}>
+                  <span className="font-medium">Avg response · all sites</span>
+                  <span className="text-(--text-muted)">6h</span>
+                </div>
+                <div className="relative" style={{ height: u(96) }}>
+                  <Sparkline points={data.avg6h} color={LIME} version={data.renderedAt.slice(0, 15)} threshold={data.threshold} />
+                </div>
+              </div>
+              <p
+                className="flex items-center border-t border-(--border-subtle)"
+                style={{ paddingTop: u(12), gap: u(10), fontSize: u(14) }}
+              >
+                <span className="shrink-0 rounded-pill" style={{ width: u(10), height: u(10), background: checkerColor }} />
+                <span className="truncate text-(--text-secondary)">{checkerText}</span>
               </p>
-            )}
+            </aside>
           </div>
-        </div>
-        <p className="shrink-0 font-mono font-semibold tabular-nums" style={{ fontSize: u(28) }}>
-          {counts.up} / {total} <span className="font-sans font-normal text-(--text-secondary)">operational</span>
-        </p>
-      </section>
 
-      {/* Grid */}
-      {total === 0 ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center text-(--text-secondary)" style={{ fontSize: u(28) }}>
-          No sites to show — every site is paused or none have been added yet.
-        </div>
-      ) : (
-        <div
-          className="grid min-h-0 flex-1"
-          style={
-            {
-              '--tv-scale': grid.scale,
-              gridTemplateColumns: `repeat(${grid.columns}, minmax(0, 1fr))`,
-              gridTemplateRows: `repeat(${grid.rows}, minmax(0, 1fr))`,
-              gap: u(24, true),
-            } as CSSProperties
-          }
-        >
-          {ordered.map((entry) => (
-            <Tile key={entry.snapshot.site.id} entry={entry} now={now} historyDays={grid.historyDays} />
-          ))}
-        </div>
-      )}
+          {/* Laptop: the feed as a ticker */}
+          <Ticker items={data.feed} />
 
-      {/* Footer */}
-      <footer className="flex shrink-0 items-center text-(--text-muted)" style={{ fontSize: u(16), gap: u(20) }}>
-        <span className="shrink-0">Sites with issues are always listed first</span>
-        <span aria-hidden="true" className="h-px flex-1 bg-(--border-subtle)" />
-        <ul className="flex shrink-0 items-center" style={{ gap: u(24) }} aria-label="Legend">
-          {LEGEND.map((status) => (
-            <li key={status} className="flex items-center" style={{ gap: u(8) }}>
-              <Dot status={status} px={14} />
-              {STATUS_LABEL[status]}
-            </li>
-          ))}
-        </ul>
-      </footer>
+          {/* Footer */}
+          <footer className="flex items-center text-(--text-muted)" style={{ fontSize: u(15), gap: u(20) }}>
+            <span className="shrink-0">Sites with issues are always listed first</span>
+            <span aria-hidden="true" className="h-px flex-1 bg-(--border-subtle)" />
+            <ul className="flex shrink-0 items-center" style={{ gap: u(22) }} aria-label="Legend" data-legend>
+              {LEGEND.map((status) => (
+                <li key={status} className="flex items-center" style={{ gap: u(8) }}>
+                  <Dot status={status} size={u(13)} />
+                  {STATUS_LABEL[status]}
+                </li>
+              ))}
+            </ul>
+          </footer>
+        </div>
+      </div>
 
-      {/* Fullscreen needs a user gesture, so the control appears only while the mouse moves. */}
-      {pointerActive && (
-        <button
-          type="button"
-          onClick={toggleFullscreen}
-          className="fixed inline-flex items-center rounded-md border border-(--border-strong) bg-(--surface-raised) text-(--text-primary) shadow-lg shadow-black/40"
-          style={{ right: u(24), bottom: u(24), gap: u(8), padding: `${u(8)} ${u(14)}`, fontSize: u(16) }}
-        >
-          {fullscreen ? (
-            <Minimize aria-hidden="true" style={{ width: u(18), height: u(18) }} />
-          ) : (
-            <Maximize aria-hidden="true" style={{ width: u(18), height: u(18) }} />
-          )}
-          {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-        </button>
-      )}
+      <MobileView
+        data={data}
+        ordered={ordered}
+        headline={headline}
+        summary={summary}
+        bannerStatus={bannerStatus}
+        liveState={liveState}
+        stats={stats}
+        feedChange={feedChange}
+      />
+    </>
+  )
+}
+
+// --- grid with FLIP reorder (M9) ----------------------------------------------------------
+
+function TileGrid({
+  entries,
+  data,
+  now,
+  flash,
+  style,
+}: {
+  entries: TvEntry[]
+  data: TvData
+  now: number
+  flash: Change
+  style: CSSProperties
+}) {
+  const gridRef = useRef<HTMLDivElement>(null)
+  const rects = useRef(new Map<string, DOMRect>())
+  const orderKey = entries.map((entry) => entry.snapshot.site.id).join(',')
+
+  // Measure every tile; on an order change, slide each from its old slot (450 ms, no bounce).
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    const tiles = [...grid.querySelectorAll<HTMLElement>('[data-tile]')]
+    const reduce = prefersReducedMotion()
+    for (const tile of tiles) {
+      const id = tile.dataset.tile!
+      const next = tile.getBoundingClientRect()
+      const previous = rects.current.get(id)
+      if (previous && !reduce && (previous.left !== next.left || previous.top !== next.top)) {
+        tile.animate(
+          [{ transform: `translate(${previous.left - next.left}px, ${previous.top - next.top}px)` }, { transform: 'translate(0, 0)' }],
+          { duration: 450, easing: 'cubic-bezier(.25,1,.5,1)' },
+        )
+      }
+      rects.current.set(id, next)
+    }
+  }, [orderKey])
+
+  // Keep stored positions current when the screen size changes (no animation for that).
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    const observer = new ResizeObserver(() => {
+      for (const tile of grid.querySelectorAll<HTMLElement>('[data-tile]')) {
+        rects.current.set(tile.dataset.tile!, tile.getBoundingClientRect())
+      }
+    })
+    observer.observe(grid)
+    return () => observer.disconnect()
+  }, [])
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex items-center justify-center text-(--text-secondary)" style={{ fontSize: u(26) }}>
+        No sites to show — every site is paused or none have been added yet.
+      </div>
+    )
+  }
+
+  let flashIndex = 0
+  return (
+    <div ref={gridRef} className="tv-grid" style={style}>
+      {entries.map((entry) => {
+        const id = entry.snapshot.site.id
+        const flashing = flash.ids.has(id)
+        const delay = flashing ? flashIndex++ * 40 : 0
+        return (
+          <Tile
+            key={id}
+            entry={entry}
+            now={now}
+            points={data.sparklines[id] ?? []}
+            sparkVersion={data.sparkStart}
+            degradedSince={data.degradedSince[id]}
+            flashKey={flashing ? flash.generation : 0}
+            flashDelay={delay}
+          />
+        )
+      })}
     </div>
   )
 }
 
-function Tile({ entry, now, historyDays }: { entry: TvEntry; now: number; historyDays: number }) {
+function Tile({
+  entry,
+  now,
+  points,
+  sparkVersion,
+  degradedSince,
+  flashKey,
+  flashDelay,
+}: {
+  entry: TvEntry
+  now: number
+  points: (number | null)[]
+  sparkVersion: string
+  degradedSince: string | undefined
+  flashKey: number
+  flashDelay: number
+}) {
   const { snapshot, status } = entry
   const { site, latest, openIncident, uptime30d, history } = snapshot
-  const tone = TONE[status]
   const message = messageFor(snapshot, status)
+  const color = STATUS_COLOR[status]
 
-  let primary: string
+  let primary: React.ReactNode
   let secondary: { text: string; mono: boolean } | null
   if (status === 'down') {
-    primary = openIncident ? `Down for ${formatDuration(openIncident.started_at, null, now)}` : 'Down'
+    primary = openIncident ? <DownTimer since={openIncident.started_at} /> : 'Down'
     secondary = message ? { text: message.text, mono: message.kind === 'raw' } : null
   } else if (status === 'degraded') {
-    primary = ms(latest?.response_ms)
-    secondary = message ? { text: message.text, mono: message.kind === 'raw' } : null
+    primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" />
+    const forHow = degradedSince ? ` · ${shortDuration(now - Date.parse(degradedSince))}` : ''
+    secondary = message ? { text: `${message.text}${forHow}`, mono: message.kind === 'raw' } : null
   } else if (status === 'up') {
-    primary = ms(latest?.response_ms)
+    primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" />
     secondary = { text: hostOf(site.url), mono: true }
   } else {
     primary = '—'
@@ -334,41 +530,38 @@ function Tile({ entry, now, historyDays }: { entry: TvEntry; now: number; histor
   }
 
   return (
-    <article
-      className="flex min-h-0 min-w-0 flex-col justify-between rounded-lg bg-(--surface-card)"
-      style={{
-        border: `${status === 'down' ? 2 : 1}px solid ${status === 'up' || status === 'stale' ? 'var(--border-subtle)' : tone.border}`,
-        boxShadow: tone.glow,
-        padding: `${u(20, true)} ${u(24, true)}`,
-        gap: u(10, true),
-      }}
-    >
-      {/* Row 1 */}
-      <div className="flex min-w-0 items-center justify-between" style={{ gap: u(12, true) }}>
-        <div className="flex min-w-0 items-center" style={{ gap: u(12, true) }}>
-          <Dot status={status} px={20} scaled />
-          <h2 className="truncate leading-tight font-semibold" style={{ fontSize: u(26, true) }} title={site.name}>
+    <article className="tv-tile" data-tile={site.id} data-status={status}>
+      {status === 'down' && <span className="tv-glow" />}
+      {status === 'degraded' && <span className="tv-breathe" />}
+      {flashKey > 0 && <span key={flashKey} className="tv-flash" style={{ animationDelay: `${flashDelay}ms` }} />}
+
+      <div className="relative flex min-w-0 items-center justify-between" style={{ gap: u(12, true) }}>
+        <div className="flex min-w-0 items-center" style={{ gap: u(10, true) }}>
+          <Dot status={status} size={u(18, true)} />
+          <h2 className="truncate leading-tight font-semibold" style={{ fontSize: u(24, true) }} title={site.name}>
             {site.name}
           </h2>
         </div>
-        <span className="shrink-0 font-semibold" style={{ fontSize: u(16, true), color: STATUS_COLOR[status] }}>
+        <span
+          className="shrink-0 rounded-pill font-semibold"
+          style={{ background: STATUS_SOFT[status], color, fontSize: u(13, true), padding: `${u(4, true)} ${u(10, true)}` }}
+        >
           {STATUS_LABEL[status]}
         </span>
       </div>
 
-      {/* Row 2 */}
-      <div className="flex min-w-0 items-end justify-between" style={{ gap: u(16, true) }}>
+      <div className="relative flex min-w-0 items-end justify-between" style={{ gap: u(16, true) }}>
         <div className="min-w-0">
           <p
-            className="truncate font-mono leading-none font-bold tabular-nums"
-            style={{ fontSize: u(44, true), color: status === 'down' ? 'var(--status-down)' : undefined }}
+            className="tv-num truncate leading-none font-bold"
+            style={{ fontSize: u(40, true), color: status === 'down' ? 'var(--status-down)' : status === 'degraded' ? 'var(--status-degraded)' : undefined }}
           >
             {primary}
           </p>
           {secondary && (
             <p
               className={`truncate text-(--text-secondary) ${secondary.mono ? 'font-mono' : 'font-sans'}`}
-              style={{ fontSize: u(16, true), marginTop: u(8, true) }}
+              style={{ fontSize: u(14, true), marginTop: u(6, true) }}
               title={secondary.text}
             >
               {secondary.text}
@@ -376,19 +569,113 @@ function Tile({ entry, now, historyDays }: { entry: TvEntry; now: number; histor
           )}
         </div>
         <div className="shrink-0 text-right">
-          <p className="font-mono leading-none font-semibold tabular-nums" style={{ fontSize: u(26, true) }}>
-            {formatPercent(uptime30d)}
-          </p>
-          <p className="text-(--text-muted)" style={{ fontSize: u(14, true), marginTop: u(6, true) }}>
+          <TweenNumber value={uptime30d} format="pct" className="block leading-none font-semibold" style={{ fontSize: u(24, true) }} />
+          <p className="text-(--text-muted)" style={{ fontSize: u(12, true), marginTop: u(5, true) }}>
             Uptime · 30d
           </p>
         </div>
       </div>
 
-      {/* Row 3 — the most recent `historyDays` days, so dense grids never overflow. */}
-      <div className="min-w-0 overflow-hidden">
-        <HistoryBar history={history.slice(-historyDays)} height={u(28, true)} />
+      <div className="tv-spark-wrap">
+        <Sparkline points={points} color={status === 'stale' ? 'var(--status-stale)' : color} version={sparkVersion} />
+      </div>
+
+      <div className="tv-hist relative">
+        <HistoryBar history={history} height={u(16, true)} />
       </div>
     </article>
+  )
+}
+
+// --- mobile (< 640 px, scrolls) --------------------------------------------------------------
+
+function MobileView({
+  data,
+  ordered,
+  headline,
+  summary,
+  bannerStatus,
+  liveState,
+  stats,
+  feedChange,
+}: {
+  data: TvData
+  ordered: TvEntry[]
+  headline: string
+  summary: string
+  bannerStatus: DisplayStatus
+  liveState: LiveState
+  stats: { label: string; value: React.ReactNode; delta: string; color: string }[]
+  feedChange: Change
+}) {
+  return (
+    <div className="tv-mobile min-h-dvh flex-col gap-4 bg-(--surface-page) p-4 text-(--text-primary)">
+      <header className="flex items-center gap-2.5">
+        <LogoPulse mood={bannerStatus === 'stale' ? 'stale' : ordered.some((e) => e.status === 'down') ? 'down' : 'normal'} size="1.75rem" />
+        <h1 className="min-w-0 flex-1 truncate text-base font-bold">System Status</h1>
+        <LivePill state={liveState} compact />
+        <Clock compact />
+      </header>
+
+      <section
+        className="flex flex-col gap-3 rounded-lg border p-4"
+        style={{
+          background: STATUS_SOFT[bannerStatus],
+          borderColor: bannerStatus === 'up' ? 'color-mix(in srgb, var(--status-up) 40%, transparent)' : STATUS_COLOR[bannerStatus],
+        }}
+      >
+        <div className="flex items-center gap-3">
+          <Dot status={bannerStatus} size="1.25rem" />
+          <p className="text-lg leading-tight font-bold">{headline}</p>
+        </div>
+        <p className="text-sm text-(--text-secondary)">{summary}</p>
+        <Countdown lastRunAt={data.lastRunAt} variant="bar" />
+      </section>
+
+      <dl className="grid grid-cols-2 gap-3">
+        {stats.map((stat) => (
+          <div key={stat.label} className="min-w-0 rounded-md border border-(--border-subtle) bg-(--surface-card) p-3">
+            <dt className="text-[10px] font-semibold tracking-wider text-(--text-muted) uppercase">{stat.label}</dt>
+            <dd className="tv-num text-xl font-bold">{stat.value}</dd>
+            <dd className="truncate text-xs" style={{ color: stat.color }}>
+              {stat.delta}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      <h2 className="text-sm font-semibold text-(--text-secondary)">Sites</h2>
+      <ul className="flex flex-col divide-y divide-(--border-subtle) overflow-hidden rounded-lg border border-(--border-subtle) bg-(--surface-card)">
+        {ordered.map(({ snapshot, status }) => {
+          const message = messageFor(snapshot, status)
+          const line =
+            status === 'up' ? hostOf(snapshot.site.url) : (message?.text ?? STATUS_LABEL[status])
+          const color = STATUS_COLOR[status]
+          return (
+            <li key={snapshot.site.id} className="flex items-center gap-3 px-3 py-2.5">
+              <Dot status={status} size="0.75rem" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{snapshot.site.name}</p>
+                <p className="truncate text-xs text-(--text-muted)">{line}</p>
+              </div>
+              <div className="relative shrink-0" style={{ width: 64, height: 28 }}>
+                <Sparkline points={data.sparklines[snapshot.site.id] ?? []} color={color} version={data.sparkStart} />
+              </div>
+              <span className="tv-num w-14 shrink-0 text-right text-sm font-semibold" style={{ color: status === 'up' ? undefined : color }}>
+                {status === 'down' ? 'DOWN' : status === 'stale' ? '—' : <TweenNumber value={snapshot.latest?.response_ms ?? null} format="plain-ms" />}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+
+      <section className="flex flex-col gap-2 rounded-lg border border-(--border-subtle) bg-(--surface-card) p-4">
+        <h2 className="text-sm font-semibold">
+          Incidents <span className="font-normal text-(--text-muted)">· 24h</span>
+        </h2>
+        <FeedList items={data.feed.slice(0, 4)} newIds={feedChange.ids} generation={feedChange.generation} rowHeight="2rem" compact />
+      </section>
+      <p className="text-center text-xs text-(--text-muted)">Sites with issues are always listed first</p>
+    </div>
   )
 }

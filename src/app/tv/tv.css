@@ -1,0 +1,467 @@
+/*
+ * TV wall v2 — layouts and motion.
+ *
+ * One unit, --u, scales everything with the screen: 1 at the design size of
+ * each layout (1920 × 1080 landscape, 1080 × 1920 portrait), whichever of width
+ * or height is tighter. Layouts are picked by media queries only:
+ *   tv         landscape, ≥ 1600 × 1000           grid + right rail
+ *   ultrawide  landscape, ≥ 2560 wide, ≥ 2:1      5 columns + wide rail
+ *   laptop     landscape, < 1600 wide or < 1000 tall   grid + incident ticker
+ *   portrait   portrait, ≥ 640 wide              2 columns, incidents below
+ *   mobile     < 640 wide                         .tv-mobile, the only one that scrolls
+ * Motion: transform / opacity (and SVG stroke-dashoffset) only. Loops pause
+ * while the tab is hidden (.tv-paused) and vanish under reduced motion.
+ */
+
+.tv-root {
+  --u: min(100vw / 1920, 100vh / 1080);
+  --rail: calc(400 * var(--u));
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--surface-page);
+  color: var(--text-primary);
+}
+
+.tv-shift {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: calc(20 * var(--u));
+  height: 100%;
+  padding: calc(40 * var(--u)) calc(48 * var(--u));
+  transition: transform 1.5s ease-in-out;
+}
+
+.tv-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- main area: grid + rail ------------------------------------------------- */
+.tv-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail);
+  gap: calc(24 * var(--u));
+  min-height: 0;
+}
+
+.tv-grid {
+  --cols: var(--cols-tv);
+  --rows: var(--rows-tv);
+  --s: var(--scale-tv);
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--rows), minmax(0, 1fr));
+  gap: calc(20 * var(--u) * var(--s));
+  min-height: 0;
+}
+
+.tv-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-card);
+  padding: calc(20 * var(--u));
+  gap: calc(14 * var(--u));
+}
+
+.tv-ticker {
+  display: none;
+}
+.tv-show-laptop {
+  display: none;
+}
+
+/* Rows that do not fully fit wrap into a hidden second column — never half a row. */
+.tv-feed {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  column-gap: 100vw;
+  min-height: 0;
+  overflow: hidden;
+}
+.tv-feed > * {
+  width: 100%;
+}
+
+/* ---- tiles -------------------------------------------------------------------- */
+.tv-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  padding: calc(18 * var(--u) * var(--s)) calc(22 * var(--u) * var(--s));
+  gap: calc(10 * var(--u) * var(--s));
+}
+.tv-tile[data-status='down'] {
+  border: 2px solid var(--status-down);
+  background: color-mix(in srgb, var(--status-down) 7%, var(--surface-card));
+}
+.tv-tile[data-status='degraded'] {
+  border: 1.5px solid var(--status-degraded);
+}
+
+/* M8 — down glow breathes; degraded border breathes at half intensity. */
+.tv-glow,
+.tv-breathe {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.tv-glow {
+  box-shadow: inset 0 0 calc(28 * var(--u)) color-mix(in srgb, var(--status-down) 55%, transparent);
+  animation: tv-glow 2.4s ease-in-out infinite alternate;
+}
+.tv-breathe {
+  box-shadow: inset 0 0 0 1.5px var(--status-degraded);
+  animation: tv-breathe 4s ease-in-out infinite alternate;
+}
+@keyframes tv-glow {
+  from { opacity: 0.35; }
+  to { opacity: 0.7; }
+}
+@keyframes tv-breathe {
+  from { opacity: 0.15; }
+  to { opacity: 0.5; }
+}
+
+/* M5 — one light band across the tile, plus a brief border brighten. */
+.tv-flash {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.tv-flash::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.09), transparent);
+  transform: translateX(-120%);
+  animation: tv-band 600ms ease-out both;
+  animation-delay: inherit;
+}
+.tv-flash::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.35);
+  opacity: 0;
+  animation: tv-edge 900ms ease-out both;
+  animation-delay: inherit;
+}
+@keyframes tv-band {
+  to { transform: translateX(320%); }
+}
+@keyframes tv-edge {
+  25% { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Takes all spare height in the tile — and gives it up first when the tile is short. */
+.tv-spark-wrap {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* History bar: drop the oldest days when the tile is too narrow (≈ 3 px per day). */
+.tv-hist {
+  container-type: inline-size;
+  min-width: 0;
+}
+@container (max-width: 280px) {
+  .tv-hist > div > div:nth-child(-n + 30) { display: none; }
+}
+@container (max-width: 190px) {
+  .tv-hist > div > div:nth-child(-n + 45) { display: none; }
+}
+@container (max-width: 140px) {
+  .tv-hist > div > div:nth-child(-n + 60) { display: none; }
+}
+
+/* ---- sparkline ------------------------------------------------------------------ */
+.tv-spark {
+  position: absolute;
+  inset: 0;
+}
+.tv-spark svg {
+  overflow: visible;
+}
+.tv-spark-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 999px;
+}
+.tv-spark-dot::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0.22;
+}
+
+/* ---- banner (M11: tone layers crossfade with opacity) ------------------------ */
+.tv-banner {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(24 * var(--u));
+  border-radius: var(--radius-lg);
+  padding: calc(18 * var(--u)) calc(28 * var(--u));
+}
+.tv-tone {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid transparent;
+  opacity: 0;
+  transition: opacity 800ms ease;
+  pointer-events: none;
+}
+.tv-tone[data-on='true'] {
+  opacity: 1;
+}
+.tv-stats {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: calc(40 * var(--u));
+}
+.tv-fade-in {
+  animation: tv-fade 150ms ease-out both;
+}
+@keyframes tv-fade {
+  from { opacity: 0; }
+}
+
+/* ---- top bar parts -------------------------------------------------------------- */
+.tv-logo {
+  position: relative;
+  flex-shrink: 0;
+}
+.tv-logo-sweep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask: url(/logo.png) center / contain no-repeat;
+  mask: url(/logo.png) center / contain no-repeat;
+}
+.tv-logo-sweep::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.85) 50%, transparent 70%);
+  transform: translateX(-130%);
+  animation: tv-sweep var(--sweep, 2.4s) ease-in-out infinite;
+}
+.tv-logo-tint {
+  position: absolute;
+  inset: 0;
+  background: var(--status-down);
+  opacity: 0.28;
+}
+@keyframes tv-sweep {
+  0% { transform: translateX(-130%); }
+  45%, 100% { transform: translateX(130%); }
+}
+
+.tv-halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--status-up);
+  animation: tv-halo 2s ease-out infinite;
+}
+@keyframes tv-halo {
+  from { transform: scale(1); opacity: 0.6; }
+  to { transform: scale(2.2); opacity: 0; }
+}
+
+.tv-colon {
+  animation: tv-colon 1s ease-in-out infinite;
+}
+@keyframes tv-colon {
+  50% { opacity: 0.4; }
+}
+
+.tv-spin {
+  animation: tv-spin 1s linear infinite;
+  transform-origin: 50% 50%;
+}
+@keyframes tv-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- feed ----------------------------------------------------------------------- */
+.tv-feed-row {
+  position: relative;
+}
+.tv-feed-new::before {
+  content: '';
+  position: absolute;
+  inset: 0 calc(-8 * var(--u));
+  border-radius: var(--radius-sm);
+  background: var(--brand-signal-lime);
+  opacity: 0;
+  animation: tv-new 3s ease-out both;
+}
+@keyframes tv-new {
+  0% { opacity: 0.14; }
+  80% { opacity: 0.1; }
+  100% { opacity: 0; }
+}
+
+/* M10 ticker: constant ~40 px/s; the track holds the items twice for a seamless loop. */
+.tv-marquee {
+  display: flex;
+  width: max-content;
+  animation: tv-marquee var(--marquee, 30s) linear infinite;
+}
+.tv-ticker:hover .tv-marquee {
+  animation-play-state: paused;
+}
+@keyframes tv-marquee {
+  to { transform: translateX(-50%); }
+}
+
+.tv-hide-cursor,
+.tv-hide-cursor * {
+  cursor: none !important;
+}
+
+/* ---- layouts ---------------------------------------------------------------------- */
+@media (orientation: landscape) and (min-width: 2560px) and (min-aspect-ratio: 2/1) and (min-height: 1000px) {
+  .tv-root {
+    --rail: calc(465 * var(--u));
+  }
+  .tv-grid {
+    --cols: var(--cols-uw);
+    --rows: var(--rows-uw);
+    --s: var(--scale-uw);
+  }
+}
+
+@media (orientation: landscape) and (min-width: 640px) and (max-width: 1599px),
+  (orientation: landscape) and (min-width: 640px) and (max-height: 999px) {
+  .tv-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tv-rail {
+    display: none;
+  }
+  .tv-ticker {
+    display: flex;
+  }
+  .tv-show-laptop {
+    display: inline;
+  }
+  .tv-grid {
+    --cols: var(--cols-laptop);
+    --rows: var(--rows-laptop);
+    --s: var(--scale-laptop);
+  }
+}
+
+@media (orientation: portrait) and (min-width: 640px) {
+  .tv-root {
+    --u: min(100vw / 1080, 100vh / 1920);
+  }
+  .tv-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .tv-grid {
+    --cols: var(--cols-portrait);
+    --rows: var(--rows-portrait);
+    --s: var(--scale-portrait);
+  }
+  .tv-banner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tv-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .tv-rail-chart {
+    display: none !important;
+  }
+  /* Narrow: a tighter top bar so the title fits on one row without truncating. */
+  .tv-top {
+    gap: calc(14 * var(--u)) !important;
+  }
+  .tv-top .tv-title {
+    font-size: calc(26 * var(--u)) !important;
+  }
+  .tv-top .tv-subtitle {
+    font-size: calc(13 * var(--u)) !important;
+  }
+  .tv-top .tv-clock-main {
+    font-size: calc(40 * var(--u)) !important;
+  }
+  .tv-top .tv-right {
+    gap: calc(16 * var(--u)) !important;
+  }
+  .tv-rail .tv-feed {
+    height: calc(5 * 44 * var(--u));
+    flex: none;
+  }
+}
+
+.tv-mobile {
+  display: none;
+}
+@media (max-width: 639px) {
+  .tv-root {
+    display: none;
+  }
+  .tv-mobile {
+    display: flex;
+  }
+}
+
+/* ---- pause and reduced motion ----------------------------------------------------- */
+.tv-paused *,
+.tv-paused *::before,
+.tv-paused *::after {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tv-root *,
+  .tv-root *::before,
+  .tv-root *::after,
+  .tv-mobile *,
+  .tv-mobile *::before,
+  .tv-mobile *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .tv-shift {
+    transition: none !important;
+  }
+  /* The band would rest off-tile anyway; make sure no frozen highlight shows. */
+  .tv-flash,
+  .tv-feed-new::before,
+  .tv-halo {
+    display: none;
+  }
+}
