@@ -4,6 +4,7 @@ import {
   classifyResponse,
   combineCheck,
   pageIsOk,
+  parseHealthPayload,
   type CombinedResult,
   type HealthResult,
   type PageResult,
@@ -24,6 +25,8 @@ export const USER_AGENT = '9ExpertMonitor/1.0 (+internal uptime check)'
 export const ATTEMPT_TIMEOUT_MS = 10_000
 /** Cool-down before the single retry that guards against cold starts. */
 export const RETRY_DELAY_MS = 2_000
+/** A 5xx health body is read only up to this size (enough for any health JSON, not for an HTML error page). */
+export const HEALTH_5XX_BODY_LIMIT = 16 * 1024
 
 export interface CheckTarget {
   url: string
@@ -156,6 +159,33 @@ async function pageCheck(url: string, runSignal: AbortSignal): Promise<PageResul
   return pageOnce(url, runSignal)
 }
 
+/**
+ * Reads at most `limit` bytes of a body; null when it is larger (the rest is
+ * cancelled) or the read fails / times out (same fetch signal as the request).
+ */
+async function readBounded(response: Response, limit: number): Promise<string | null> {
+  const reader = response.body?.getReader()
+  if (!reader) return null
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > limit) {
+        await reader.cancel().catch(() => {})
+        return null
+      }
+      chunks.push(value)
+    }
+  } catch {
+    await reader.cancel().catch(() => {})
+    return null
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks))
+}
+
 /** The `/api/health` contract check. One attempt; a failure here only degrades. */
 async function healthCheck(url: string, runSignal: AbortSignal): Promise<HealthResult> {
   const startedAt = performance.now()
@@ -181,12 +211,16 @@ async function healthCheck(url: string, runSignal: AbortSignal): Promise<HealthR
   const responseMs = Math.round(performance.now() - startedAt)
   const httpStatus = response.status
 
-  // A 5xx is decided by the status line alone; skip the error page's body.
+  // A 5xx is decided by the status line alone. Its body is still read (≤ 16 KB):
+  // most health endpoints answer 503 with JSON naming the failing dependency,
+  // which is stored as the payload so the TV can say "DB unreachable". The
+  // verdict (status / error / httpStatus) is the same with or without it.
   if (httpStatus >= 500) {
-    await response.body?.cancel().catch(() => {})
+    const body = await readBounded(response, HEALTH_5XX_BODY_LIMIT)
+    const parsed = body === null ? null : parseHealthPayload(body)
     return {
       status: 'down',
-      payload: null,
+      payload: parsed && 'payload' in parsed ? parsed.payload : null,
       error: `HTTP ${httpStatus} ${phraseOf(response)}`.trim(),
       httpStatus,
       responseMs,

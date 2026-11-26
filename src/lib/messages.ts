@@ -9,11 +9,18 @@
  * URLs and codes only — Thai in a monospace fallback is hard to read.
  */
 
+import { groupedMs } from './tv'
+
 // --- Check results (page-first) ---------------------------------------------
 
 /** Page answered 2xx but slower than the site's threshold. */
 export function slowPageMessage(expectedMs: number): string {
   return `หน้าเว็บตอบช้ากว่าเกณฑ์ ${expectedMs} ms`
+}
+
+/** Short form for the TV tile and TV mobile rows: "ช้ากว่าเกณฑ์ 1,500 ms". */
+export function slowPageShortMessage(expectedMs: number): string {
+  return `ช้ากว่าเกณฑ์ ${groupedMs(expectedMs)}`
 }
 
 /** Page is fine; the optional health check reported a problem. `reason` is English. */

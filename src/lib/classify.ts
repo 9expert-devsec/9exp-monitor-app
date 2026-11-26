@@ -42,6 +42,26 @@ function truncate(value: string, max = 1000): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`
 }
 
+/**
+ * The one parser for a health body: a JSON object within MAX_PAYLOAD_BYTES.
+ * Used by `classifyResponse()` and, for a 5xx, by the probe (payload only).
+ */
+export function parseHealthPayload(body: string): { payload: HealthPayload } | { error: string } {
+  if (Buffer.byteLength(body, 'utf8') > MAX_PAYLOAD_BYTES) {
+    return { error: `Health payload exceeds ${MAX_PAYLOAD_BYTES} bytes; not stored` }
+  }
+  try {
+    const parsed: unknown = JSON.parse(body)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Health response is not a JSON object')
+    }
+    return { payload: parsed as HealthPayload }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return { error: truncate(`Malformed health response: ${reason}`) }
+  }
+}
+
 export function classifyResponse({
   httpStatus,
   statusText = '',
@@ -63,29 +83,9 @@ export function classifyResponse({
     return { status: 'degraded', payload: null, error: httpLabel }
   }
 
-  if (Buffer.byteLength(body, 'utf8') > MAX_PAYLOAD_BYTES) {
-    return {
-      status: 'degraded',
-      payload: null,
-      error: `Health payload exceeds ${MAX_PAYLOAD_BYTES} bytes; not stored`,
-    }
-  }
-
-  let payload: HealthPayload
-  try {
-    const parsed: unknown = JSON.parse(body)
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Health response is not a JSON object')
-    }
-    payload = parsed as HealthPayload
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    return {
-      status: 'degraded',
-      payload: null,
-      error: truncate(`Malformed health response: ${reason}`),
-    }
-  }
+  const parsed = parseHealthPayload(body)
+  if ('error' in parsed) return { status: 'degraded', payload: null, error: parsed.error }
+  const { payload } = parsed
 
   const reasons: string[] = []
 

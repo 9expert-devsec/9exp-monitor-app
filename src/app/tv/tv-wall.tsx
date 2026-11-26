@@ -30,7 +30,7 @@ import { messageFor } from '@/components/site-card'
 import { StatusDot } from '@/components/status-dot'
 import { StatusHeatmap, type HeatRow } from '@/components/tv/status-heatmap'
 import { hostOf } from '@/lib/format'
-import { CHECKER_NEVER_RAN_MESSAGE, CHECKER_STALLED_MESSAGE } from '@/lib/messages'
+import { CHECKER_NEVER_RAN_MESSAGE, CHECKER_STALLED_MESSAGE, slowPageShortMessage } from '@/lib/messages'
 import { STATUS_COLOR, STATUS_LABEL, STATUS_SOFT, displayStatusOf, isStale } from '@/lib/status'
 import {
   causeHead,
@@ -639,12 +639,15 @@ function Tile({
   } else if (status === 'degraded') {
     primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" className="tv-fit" />
     const cause = healthCause(latest, site.expected_ms)
+    const slow = latest?.response_ms != null && latest.response_ms > site.expected_ms
     const forHow = degradedSince ? ` · ${shortDuration(now - Date.parse(degradedSince))}` : ''
     secondary = cause
       ? { text: causeLine(cause, degradedSince, now), mono: false }
-      : message
-        ? { text: `${message.text}${forHow}`, mono: message.kind === 'raw' }
-        : null
+      : slow
+        ? { text: `${slowPageShortMessage(site.expected_ms)}${forHow}`, mono: false }
+        : message
+          ? { text: `${message.text}${forHow}`, mono: message.kind === 'raw' }
+          : null
   } else if (status === 'up') {
     primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" className="tv-fit" />
     secondary = { text: hostOf(site.url), mono: true }
@@ -807,13 +810,18 @@ function MobileView({
         {ordered.map(({ snapshot, status }) => {
           const message = messageFor(snapshot, status)
           const cause = status === 'degraded' ? healthCause(snapshot.latest, snapshot.site.expected_ms) : null
+          const slow =
+            status === 'degraded' && snapshot.latest?.response_ms != null && snapshot.latest.response_ms > snapshot.site.expected_ms
+          const since = data.degradedSince[snapshot.site.id]
           const ssl = sslWarning(data.certs[snapshot.site.id], now)
           const line =
             status === 'up'
               ? hostOf(snapshot.site.url)
               : cause
-                ? causeLine(cause, data.degradedSince[snapshot.site.id], now)
-                : (message?.text ?? STATUS_LABEL[status])
+                ? causeLine(cause, since, now)
+                : slow
+                  ? `${slowPageShortMessage(snapshot.site.expected_ms)}${since ? ` · ${shortDuration(now - Date.parse(since))}` : ''}`
+                  : (message?.text ?? STATUS_LABEL[status])
           const color = STATUS_COLOR[status]
           return (
             <li key={snapshot.site.id} className="flex items-center gap-3 px-3 py-2.5">
