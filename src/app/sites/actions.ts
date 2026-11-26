@@ -282,11 +282,12 @@ export async function deleteSiteAction(id: string, confirmName: string): Promise
   if (!caller) return { ok: false, error: NOT_ALLOWED }
 
   const admin = serviceClient()
+  // `*` rather than naming logo_path, so this still works before the logo migration.
   const { data: site, error: loadError } = await admin
     .from('monitored_sites')
-    .select('id, name, slug')
+    .select('*')
     .eq('id', id)
-    .maybeSingle<Pick<Site, 'id' | 'name' | 'slug'>>()
+    .maybeSingle<Site>()
   if (loadError) return { ok: false, error: loadError.message }
   if (!site) return { ok: false, error: 'That site no longer exists.' }
   if (confirmName.trim() !== site.name) {
@@ -296,8 +297,33 @@ export async function deleteSiteAction(id: string, confirmName: string): Promise
   const { error } = await admin.from('monitored_sites').delete().eq('id', site.id)
   if (error) return { ok: false, error: error.message }
 
+  // The row is gone; its logo files go too. Never fails the delete.
+  await removeSiteLogoFiles(site.id, site.logo_path ?? null)
+
   revalidateSites(site.slug)
+  revalidatePath('/tv')
   return { ok: true }
+}
+
+/**
+ * Deletes a deleted site's logo object plus anything else under `<site_id>/`
+ * (leftovers of an interrupted replace), found by listing the prefix — no
+ * guessed names. Storage errors are logged once and swallowed: the site is
+ * already deleted and the user sees success.
+ */
+async function removeSiteLogoFiles(siteId: string, logoPath: string | null): Promise<void> {
+  try {
+    const bucket = serviceClient().storage.from(LOGO_BUCKET)
+    const { data: listed, error: listError } = await bucket.list(siteId, { limit: 1000 })
+    if (listError) throw new Error(`list ${siteId}/: ${listError.message}`)
+    const paths = new Set((listed ?? []).filter((item) => item.id !== null).map((item) => `${siteId}/${item.name}`))
+    if (logoPath) paths.add(logoPath)
+    if (paths.size === 0) return
+    const { error: removeError } = await bucket.remove([...paths])
+    if (removeError) throw new Error(`remove: ${removeError.message}`)
+  } catch (error) {
+    console.error('[logo] could not delete logo files of deleted site:', error instanceof Error ? error.message : error)
+  }
 }
 
 // --- Test connection ---------------------------------------------------------

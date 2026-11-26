@@ -280,10 +280,13 @@ export function TweenNumber({
  * the last segment draws in (700 ms) and the end-dot pulses.
  *
  * `siteThreshold` (tiles): the site's own "degraded above" line, dashed amber.
- * In scale when the 24 h peak is ≥ 50 % of it (it joins the y-range, label on
- * the left); otherwise pinned to the top edge, faded, with "↑ 1,500 ms" on the
- * right — the threshold is above this chart. Static; only the label fades in
- * (200 ms) when a site moves between the two.
+ * NEAR / in-scale — the 24 h peak is ≥ 50 % of it: the line joins the y-range,
+ *   with its value ("1,500 ms") above it on the left at 0.9.
+ * FAR / above — otherwise: the line alone, pinned to the top edge at 0.4; it
+ *   says "the threshold is above this chart". No label on purpose: the
+ *   "↑ 1,500 ms" label was removed 2026-11-26 because it crowded under the
+ *   tile's "Uptime · 30d" label; the value only matters once a site gets close.
+ * Static; the NEAR label fades in (200 ms) when a site moves from FAR to NEAR.
  */
 export function Sparkline({
   points,
@@ -456,14 +459,9 @@ export function Sparkline({
           style={{ left: `${x(plan.endIndex)}%`, top: `${y(endValue)}%`, background: color, color }}
         />
       )}
-      {mode !== null && siteThreshold !== null && (
-        <span
-          ref={limitRef}
-          className="tv-spark-limit tv-num"
-          data-mode={mode}
-          style={mode === 'in-scale' ? { top: `${limitY}%` } : undefined}
-        >
-          {mode === 'above' ? `↑ ${groupedMs(siteThreshold)}` : groupedMs(siteThreshold)}
+      {mode === 'in-scale' && siteThreshold !== null && (
+        <span ref={limitRef} className="tv-spark-limit tv-num" data-mode={mode} style={{ top: `${limitY}%` }}>
+          {groupedMs(siteThreshold)}
         </span>
       )}
       {plan.collecting && showCollectingLabel && <span className="tv-spark-label">Collecting data…</span>}

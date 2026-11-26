@@ -679,7 +679,6 @@ function Tile({
   return (
     <article className="tv-tile" data-tile={site.id} data-status={status}>
       {status === 'down' && <span className="tv-glow" />}
-      {status === 'degraded' && <span className="tv-breathe" />}
       {flashKey > 0 && <span key={flashKey} className="tv-flash" style={{ animationDelay: `${flashDelay}ms` }} />}
 
       <div className="relative flex min-w-0 items-center justify-between" style={{ gap: u(12, true) }}>
