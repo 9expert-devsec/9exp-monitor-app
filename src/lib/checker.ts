@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { refreshCertificates } from '@/lib/cert-store'
 import { notifyAfterCheck } from '@/lib/notify/engine'
 import { loadNotificationSettings, type NotificationSettings } from '@/lib/notify/slack'
 import { checkSite, type SiteCheck } from '@/lib/probe'
@@ -65,6 +66,7 @@ async function recordAndNotify(
  */
 export async function runChecks(): Promise<RunSummary> {
   const startedAt = performance.now()
+  const deadlineAt = Date.now() + RUN_DEADLINE_MS
   const supabase = serviceClient()
 
   const { data: sites, error } = await supabase
@@ -106,6 +108,9 @@ export async function runChecks(): Promise<RunSummary> {
         console.error('[checker] site failed:', result.reason)
       }
     }
+
+    // SSL expiry: certificates older than 24 h, inside what is left of the deadline. Never throws.
+    await refreshCertificates(sites ?? [], settings, deadlineAt)
   } finally {
     clearTimeout(deadlineTimer)
   }

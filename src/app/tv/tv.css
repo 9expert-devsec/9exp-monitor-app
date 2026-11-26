@@ -122,6 +122,23 @@
   padding: calc(18 * var(--u) * var(--s)) calc(22 * var(--u) * var(--s));
   gap: calc(10 * var(--u) * var(--s));
 }
+/*
+ * The tile is a size container in its own type scale (1em = 16 × --u × --s), so
+ * the P95 breakpoint holds at any screen size. Measured need: padding 2.75em +
+ * "1,620 ms" at 2.5em (11.0em) + P95 "1,480 ms" (6.6em) + "99.82%" (5.4em) +
+ * two gaps (2em) ≈ 28.8em → hide below 29em. 16:9 at 4 columns = 24.5em →
+ * hidden; portrait at 2 columns = 30.1em, ultrawide 30.2em, laptop 32.2em → shown.
+ */
+.tv-tile {
+  container: tv-tile / inline-size;
+  font-size: calc(16 * var(--u) * var(--s, 1));
+}
+@container tv-tile (max-width: 29em) {
+  .tv-p95 {
+    display: none;
+  }
+}
+
 .tv-tile[data-status='down'] {
   border: 2px solid var(--status-down);
   background: color-mix(in srgb, var(--status-down) 7%, var(--surface-card));

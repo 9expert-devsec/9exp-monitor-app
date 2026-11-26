@@ -8,7 +8,7 @@ const TIME_ZONE = 'Asia/Bangkok'
 
 export const SENDER_NAME = '9Expert Monitor'
 
-export type NotifyEventKind = 'down' | 'recover' | 'degraded' | 'checker_stalled' | 'test'
+export type NotifyEventKind = 'down' | 'recover' | 'degraded' | 'checker_stalled' | 'test' | 'ssl_expiry'
 
 export type NotifyEvent =
   | {
@@ -46,6 +46,17 @@ export type NotifyEvent =
       lastResultAt: string | null
     }
   | { kind: 'test' }
+  | {
+      kind: 'ssl_expiry'
+      siteName: string
+      siteSlug: string
+      host: string
+      /** The certificate's notAfter (ISO). */
+      validTo: string
+      /** Bangkok calendar days left (≤ 0 on / after the day). */
+      daysLeft: number
+      expired: boolean
+    }
 
 export type MessageTone = 'down' | 'up' | 'degraded' | 'info'
 
@@ -140,6 +151,27 @@ export function buildMessage(event: NotifyEvent): SlackMessageModel {
           'The Supabase cron job "monitor-checker" may have stopped.',
         ],
         link: { label: 'Open dashboard →', path: '/' },
+        fallback: title,
+      }
+    }
+    case 'ssl_expiry': {
+      const date = new Date(event.validTo).toLocaleDateString('en-US', {
+        timeZone: TIME_ZONE,
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+      const when = event.expired
+        ? `expired on ${date}`
+        : event.daysLeft <= 0
+          ? `expires today (${date})`
+          : `expires in ${event.daysLeft} ${event.daysLeft === 1 ? 'day' : 'days'} (${date})`
+      const title = `SSL for ${event.host} ${when}.`
+      return {
+        tone: event.expired || event.daysLeft <= 7 ? 'down' : 'degraded',
+        title,
+        lines: [`Site: ${event.siteName}`],
+        link: { label: 'View details →', path: `/sites/${event.siteSlug}` },
         fallback: title,
       }
     }

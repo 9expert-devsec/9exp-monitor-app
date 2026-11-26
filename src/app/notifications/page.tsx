@@ -20,6 +20,7 @@ const EVENT_LABEL: Record<string, string> = {
   recover: 'Recovered',
   degraded: 'Degraded',
   checker_stalled: 'Checker stopped',
+  ssl_expiry: 'SSL expiry',
   test: 'Test message',
 }
 

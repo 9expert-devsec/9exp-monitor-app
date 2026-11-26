@@ -33,12 +33,20 @@ import { hostOf } from '@/lib/format'
 import { CHECKER_NEVER_RAN_MESSAGE, CHECKER_STALLED_MESSAGE } from '@/lib/messages'
 import { STATUS_COLOR, STATUS_LABEL, STATUS_SOFT, displayStatusOf, isStale } from '@/lib/status'
 import {
+  causeHead,
+  causeLine,
   checkerStateAt,
   feedText,
   gridSizes,
+  groupedMs,
+  healthCause,
   orderForTv,
   primaryChars,
   shortDuration,
+  sslPhrase,
+  sslWarning,
+  type SslLevel,
+  type SslWarning,
   type TvEntry,
   type TvLayout,
 } from '@/lib/tv'
@@ -59,6 +67,26 @@ function Dot({ status, size }: { status: DisplayStatus; size: string }) {
   return (
     <span className="inline-flex shrink-0 [&>svg]:size-full" style={{ width: size, height: size }}>
       <StatusDot status={status} decorative />
+    </span>
+  )
+}
+
+const SSL_TONE: Record<SslLevel, DisplayStatus> = { warn: 'degraded', danger: 'down', unknown: 'stale' }
+
+/** "SSL 12d" / "SSL expired" / "SSL ?" — independent of the site's own status. */
+function SslPill({ warning, compact = false }: { warning: SslWarning; compact?: boolean }) {
+  const tone = SSL_TONE[warning.level]
+  return (
+    <span
+      className={`tv-num shrink-0 rounded-pill font-semibold whitespace-nowrap ${compact ? 'px-1.5 py-px text-[10px]' : ''}`}
+      style={{
+        background: STATUS_SOFT[tone],
+        color: STATUS_COLOR[tone],
+        ...(compact ? {} : { fontSize: u(13, true), padding: `${u(4, true)} ${u(10, true)}` }),
+      }}
+      title={warning.validTo ? `Certificate ${sslPhrase(warning, true)}` : 'Certificate could not be read for 2+ days'}
+    >
+      {warning.pill}
     </span>
   )
 }
@@ -196,7 +224,8 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
     .filter((entry) => entry.status === 'down' || entry.status === 'degraded')
     .map(({ snapshot, status }) => {
       const since = status === 'down' ? snapshot.openIncident?.started_at : data.degradedSince[snapshot.site.id]
-      const verb = status === 'down' ? 'down' : 'slow'
+      const cause = status === 'degraded' ? healthCause(snapshot.latest, snapshot.site.expected_ms) : null
+      const verb = status === 'down' ? 'down' : cause ? causeHead(cause) : 'slow'
       return since ? `${snapshot.site.name} ${verb} for ${shortDuration(now - Date.parse(since))}` : `${snapshot.site.name} ${verb}`
     })
   const summary = stalled
@@ -206,6 +235,24 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
     : issues.length > 0
       ? issues.slice(0, 3).join(' · ') + (issues.length > 3 ? ` · +${issues.length - 3} more` : '')
       : 'Every site answered within its threshold'
+
+  // SSL: one banner line for the soonest expiring certificate (≤ 21 days), "and N more".
+  const sslBySite = new Map(entries.map(({ snapshot }) => [snapshot.site.id, sslWarning(data.certs[snapshot.site.id], now)]))
+  const expiring = entries
+    .flatMap(({ snapshot }) => {
+      const warning = sslBySite.get(snapshot.site.id)
+      return warning && warning.level !== 'unknown' ? [{ host: hostOf(snapshot.site.url), warning }] : []
+    })
+    .sort((a, b) => Date.parse(a.warning.validTo!) - Date.parse(b.warning.validTo!))
+  const sslLine =
+    expiring.length === 0
+      ? null
+      : {
+          text:
+            `SSL · ${expiring[0].host} ${sslPhrase(expiring[0].warning)}` +
+            (expiring.length > 1 ? ` and ${expiring.length - 1} more` : ''),
+          color: expiring[0].warning.level === 'danger' ? 'var(--status-down)' : 'var(--status-degraded)',
+        }
 
   const liveState: LiveState = connectionLost ? 'reconnecting' : stalled ? 'stale' : 'live'
   const logoMood = stalled ? 'stale' : counts.down > 0 ? 'down' : 'normal'
@@ -341,6 +388,11 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
                 <p className="truncate font-sans text-(--text-secondary)" style={{ fontSize: u(16), marginTop: u(4) }} title={summary}>
                   {summary}
                 </p>
+                {sslLine && (
+                  <p className="truncate font-sans" style={{ fontSize: u(16), marginTop: u(2), color: sslLine.color }} title={sslLine.text}>
+                    {sslLine.text}
+                  </p>
+                )}
               </div>
             </div>
             <dl className="tv-stats relative">
@@ -535,6 +587,8 @@ function TileGrid({
             points={data.sparklines[id] ?? []}
             sparkVersion={data.sparkStart}
             degradedSince={data.degradedSince[id]}
+            p95={data.p95[id] ?? null}
+            ssl={sslWarning(data.certs[id], now)}
             flashKey={flashing ? flash.generation : 0}
             flashDelay={delay}
           />
@@ -550,6 +604,8 @@ function Tile({
   points,
   sparkVersion,
   degradedSince,
+  p95,
+  ssl,
   flashKey,
   flashDelay,
 }: {
@@ -558,6 +614,9 @@ function Tile({
   points: (number | null)[]
   sparkVersion: string
   degradedSince: string | undefined
+  /** P95 · 24h (null → "—"). */
+  p95: number | null
+  ssl: SslWarning | null
   flashKey: number
   flashDelay: number
 }) {
@@ -579,8 +638,13 @@ function Tile({
     secondary = message ? { text: message.text, mono: message.kind === 'raw' } : null
   } else if (status === 'degraded') {
     primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" className="tv-fit" />
+    const cause = healthCause(latest, site.expected_ms)
     const forHow = degradedSince ? ` · ${shortDuration(now - Date.parse(degradedSince))}` : ''
-    secondary = message ? { text: `${message.text}${forHow}`, mono: message.kind === 'raw' } : null
+    secondary = cause
+      ? { text: causeLine(cause, degradedSince, now), mono: false }
+      : message
+        ? { text: `${message.text}${forHow}`, mono: message.kind === 'raw' }
+        : null
   } else if (status === 'up') {
     primary = <TweenNumber value={latest?.response_ms ?? null} format="ms" className="tv-fit" />
     secondary = { text: hostOf(site.url), mono: true }
@@ -602,12 +666,15 @@ function Tile({
             {site.name}
           </h2>
         </div>
-        <span
-          className="shrink-0 rounded-pill font-semibold"
-          style={{ background: STATUS_SOFT[status], color, fontSize: u(13, true), padding: `${u(4, true)} ${u(10, true)}` }}
-        >
-          {STATUS_LABEL[status]}
-        </span>
+        <div className="flex shrink-0 items-center" style={{ gap: u(8, true) }}>
+          {ssl && <SslPill warning={ssl} />}
+          <span
+            className="shrink-0 rounded-pill font-semibold"
+            style={{ background: STATUS_SOFT[status], color, fontSize: u(13, true), padding: `${u(4, true)} ${u(10, true)}` }}
+          >
+            {STATUS_LABEL[status]}
+          </span>
+        </div>
       </div>
 
       <div className="relative flex min-w-0 items-end justify-between" style={{ gap: u(16, true) }}>
@@ -635,9 +702,24 @@ function Tile({
             </p>
           )}
         </div>
+        {/* P95 hides on narrow tiles (tv.css, container query on the tile) — the primary value comes first. */}
+        <div className="tv-p95 shrink-0 text-right">
+          <p
+            className="tv-num leading-none font-semibold whitespace-nowrap"
+            style={{
+              fontSize: u(24, true),
+              color: p95 !== null && p95 >= 0.8 * site.expected_ms ? 'var(--status-degraded)' : undefined,
+            }}
+          >
+            {p95 === null ? '—' : groupedMs(p95)}
+          </p>
+          <p className="whitespace-nowrap text-(--text-muted)" style={{ fontSize: u(12, true), marginTop: u(5, true) }}>
+            P95 · 24h
+          </p>
+        </div>
         <div className="shrink-0 text-right">
           <TweenNumber value={uptime30d} format="pct" className="block leading-none font-semibold" style={{ fontSize: u(24, true) }} />
-          <p className="text-(--text-muted)" style={{ fontSize: u(12, true), marginTop: u(5, true) }}>
+          <p className="whitespace-nowrap text-(--text-muted)" style={{ fontSize: u(12, true), marginTop: u(5, true) }}>
             Uptime · 30d
           </p>
         </div>
@@ -724,14 +806,23 @@ function MobileView({
       <ul className="flex flex-col divide-y divide-(--border-subtle) overflow-hidden rounded-lg border border-(--border-subtle) bg-(--surface-card)">
         {ordered.map(({ snapshot, status }) => {
           const message = messageFor(snapshot, status)
+          const cause = status === 'degraded' ? healthCause(snapshot.latest, snapshot.site.expected_ms) : null
+          const ssl = sslWarning(data.certs[snapshot.site.id], now)
           const line =
-            status === 'up' ? hostOf(snapshot.site.url) : (message?.text ?? STATUS_LABEL[status])
+            status === 'up'
+              ? hostOf(snapshot.site.url)
+              : cause
+                ? causeLine(cause, data.degradedSince[snapshot.site.id], now)
+                : (message?.text ?? STATUS_LABEL[status])
           const color = STATUS_COLOR[status]
           return (
             <li key={snapshot.site.id} className="flex items-center gap-3 px-3 py-2.5">
               <Dot status={status} size="0.75rem" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{snapshot.site.name}</p>
+                <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                  <span className="truncate">{snapshot.site.name}</span>
+                  {ssl && <SslPill warning={ssl} compact />}
+                </p>
                 <p className="truncate text-xs text-(--text-muted)">{line}</p>
               </div>
               <div className="relative shrink-0" style={{ width: 64, height: 28 }}>

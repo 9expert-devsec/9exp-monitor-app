@@ -7,7 +7,10 @@ import {
   bucketAverages,
   bucketWorstStatus,
   groupedMs,
+  healthCause,
+  p95,
   shortDuration,
+  type CertInfo,
   type FeedItem,
   type HeatStatus,
   type TimedValue,
@@ -24,7 +27,8 @@ import type { CheckStatus } from '@/lib/types'
  *    (≈ 288 rows per site; PostgREST returns at most 1000 rows per page);
  *  - incidents touching the last 24 h;
  *  - degraded_episodes started in the last 24 h or still open;
- *  - daily_rollups for today and yesterday (Bangkok days).
+ *  - daily_rollups for today and yesterday (Bangkok days);
+ *  - site_certificates (round 9; empty until its migration is applied).
  */
 
 const DAY_MS = 86_400_000
@@ -54,6 +58,10 @@ export interface TvData extends Pick<DashboardData, 'snapshots' | 'lastRunAt' | 
    * included, unlike the sparkline); null = no check in that bucket.
    */
   heatmap: Record<string, HeatStatus[]>
+  /** Per site id: nearest-rank P95 of the page response over 24 h (non-down checks); null under 20 samples. */
+  p95: Record<string, number | null>
+  /** Per site id: the last certificate reading (absent → no SSL UI for that site). */
+  certs: Record<string, CertInfo>
   /** Start of the first sparkline bucket (changes every 30 min — drives the slide-in). */
   sparkStart: string
   /** Per site id: when its open degraded spell began. */
@@ -75,6 +83,15 @@ interface CheckRow {
   checked_at: string
   status: CheckStatus
   response_ms: number | null
+  /** For the health-check cause of a degraded spell (no payload: too heavy for 24 h of rows). */
+  health_http_status: number | null
+  error: string | null
+}
+
+interface CertRow {
+  site_id: string
+  valid_to: string | null
+  failed_days: number
 }
 
 interface IncidentRow {
@@ -117,7 +134,7 @@ async function checksSince(since: string): Promise<CheckRow[]> {
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await serviceClient()
       .from('health_checks')
-      .select('site_id, checked_at, status, response_ms')
+      .select('site_id, checked_at, status, response_ms, health_http_status, error')
       .gte('checked_at', since)
       .order('checked_at', { ascending: true })
       .order('id', { ascending: true })
@@ -156,7 +173,7 @@ export async function getTvData(): Promise<TvData> {
   const todayStart = Date.parse(`${today}T00:00:00+07:00`)
 
   const supabase = serviceClient()
-  const [checks, incidentsResult, episodesResult, rollupsResult] = await Promise.all([
+  const [checks, incidentsResult, episodesResult, rollupsResult, certsResult] = await Promise.all([
     timed(timings, 'checks24h', () => checksSince(since24h)),
     timed(timings, 'incidents', async () =>
       supabase
@@ -179,6 +196,9 @@ export async function getTvData(): Promise<TvData> {
         .in('day', [today, yesterday])
         .returns<RollupRow[]>(),
     ),
+    timed(timings, 'certs', async () =>
+      supabase.from('site_certificates').select('site_id, valid_to, failed_days').returns<CertRow[]>(),
+    ),
   ])
 
   // Missing tables (e.g. degraded_episodes before its migration) degrade to empty, not a crash.
@@ -188,10 +208,12 @@ export async function getTvData(): Promise<TvData> {
   if (incidentsResult.error) console.error('[tv] incidents:', incidentsResult.error.message)
   if (episodesResult.error) console.error('[tv] degraded_episodes:', episodesResult.error.message)
   if (rollupsResult.error) console.error('[tv] rollups:', rollupsResult.error.message)
+  if (certsResult.error) console.error('[tv] site_certificates:', certsResult.error.message)
 
   const sites = dashboard.snapshots.map((snapshot) => snapshot.site)
   const enabled = new Set(sites.map((site) => site.id))
   const nameOf = new Map(sites.map((site) => [site.id, site.name]))
+  const expectedOf = new Map(sites.map((site) => [site.id, site.expected_ms]))
   const siteChecks = checks.filter((row) => enabled.has(row.site_id))
 
   // --- sparklines (24 h) and the 6 h all-sites average -------------------------------
@@ -206,8 +228,16 @@ export async function getTvData(): Promise<TvData> {
     bySite.set(row.site_id, list)
   }
   const sparklines: Record<string, (number | null)[]> = {}
+  const p95BySite: Record<string, number | null> = {}
   for (const site of sites) {
-    sparklines[site.id] = bucketAverages(bySite.get(site.id) ?? [], sparkStartMs, sparkSize, SPARK_POINTS)
+    const values = bySite.get(site.id) ?? []
+    sparklines[site.id] = bucketAverages(values, sparkStartMs, sparkSize, SPARK_POINTS)
+    p95BySite[site.id] = p95(values.map((value) => value.value))
+  }
+
+  const certs: Record<string, CertInfo> = {}
+  for (const row of certsResult.data ?? []) {
+    if (enabled.has(row.site_id)) certs[row.site_id] = { validTo: row.valid_to, failedDays: row.failed_days }
   }
 
   // Status heatmap: the same buckets, from every row (down ones too).
@@ -263,12 +293,14 @@ export async function getTvData(): Promise<TvData> {
     const first = siteChecks.find(
       (row) => row.site_id === episode.site_id && row.status === 'degraded' && Date.parse(row.checked_at) >= startedMs - 60_000,
     )
+    const cause = healthCause(first, expectedOf.get(episode.site_id) ?? Number.POSITIVE_INFINITY)
     feed.push({
       id: `deg-${episode.id}`,
       at: episode.started_at,
       siteName,
       kind: 'degraded',
-      detail: first?.response_ms != null ? groupedMs(first.response_ms) : '',
+      detail: cause ?? (first?.response_ms != null ? groupedMs(first.response_ms) : ''),
+      ...(cause ? { cause } : {}),
     })
   }
   feed.sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
@@ -323,6 +355,8 @@ export async function getTvData(): Promise<TvData> {
     lastRunAt: dashboard.lastRunAt,
     renderedAt: dashboard.renderedAt,
     sparklines,
+    p95: p95BySite,
+    certs,
     heatmap,
     sparkStart: new Date(sparkStartMs).toISOString(),
     degradedSince,

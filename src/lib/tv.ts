@@ -4,7 +4,7 @@
  */
 
 import { STALE_AFTER_MS } from './status'
-import type { CheckStatus, DisplayStatus, SiteSnapshot } from './types'
+import type { CheckStatus, DisplayStatus, HealthPayload, SiteSnapshot } from './types'
 
 export interface TvEntry {
   snapshot: SiteSnapshot
@@ -148,6 +148,168 @@ export function heatAxis(start: number, size: number, count: number, hours: numb
   return { midnight, ticks }
 }
 
+// --- P95 ------------------------------------------------------------------------------
+
+/** Below this many samples a 95th percentile is noise (the TV shows "—"). */
+export const P95_MIN_SAMPLES = 20
+
+/** Nearest-rank 95th percentile (no interpolation); null under 20 samples. */
+export function p95(values: number[]): number | null {
+  if (values.length < P95_MIN_SAMPLES) return null
+  const sorted = values.slice().sort((a, b) => a - b)
+  return sorted[Math.ceil(0.95 * sorted.length) - 1]
+}
+
+// --- cause line: degraded by the health check -------------------------------------
+
+/** The fields of a stored check the cause is read from (a full row or the TV's slim one). */
+export interface CauseSource {
+  status: CheckStatus
+  response_ms: number | null
+  error: string | null
+  health_http_status?: number | null
+  payload?: HealthPayload | null
+}
+
+const CAUSE_MAX = 32
+
+function shortDependency(name: string): string {
+  const trimmed = name.trim()
+  if (/^(db|database|postgres(ql)?|supabase|mysql|mariadb|sql|mongo(db)?)$/i.test(trimmed)) return 'DB'
+  const title = trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+  return title.length > 14 ? `${title.slice(0, 13)}…` : title
+}
+
+/** The failing dependency: from the stored payload, else from the stored error text. */
+function failingDependency(source: CauseSource): string | null {
+  const checks = Array.isArray(source.payload?.checks) ? source.payload.checks : []
+  const failing = checks.find((check) => check?.status !== 'ok')
+  if (failing?.name) return failing.name
+  // classifyResponse() writes reasons as `<name> is "<status>"`, joined by "; ".
+  for (const part of (source.error ?? '').split('; ')) {
+    const match = /^(.+?) is "[^"]*"$/.exec(part.replace(/^health: /, ''))
+    if (match && !match[1].startsWith('reported status')) return match[1]
+  }
+  return null
+}
+
+/**
+ * Why a site is degraded when the HEALTH CHECK failed (not a slow page), as a
+ * short cause: "DB unreachable · health 503", "Health check 503",
+ * "Health timeout". Null when the page was slow, when the site is not
+ * degraded, or when nothing says why. Tile, banner and feed share it.
+ */
+export function healthCause(source: CauseSource | null | undefined, expectedMs: number): string | null {
+  if (!source || source.status !== 'degraded') return null
+  if (source.response_ms !== null && source.response_ms > expectedMs) return null // slow page
+  const http = source.health_http_status ?? null
+  const httpBad = http !== null && (http < 200 || http >= 300)
+  const dependency = failingDependency(source)
+  if (dependency) return [`${shortDependency(dependency)} unreachable`, ...(httpBad ? [`health ${http}`] : [])].join(' · ')
+  if (httpBad) return `Health check ${http}`
+  if (!source.error) return null
+  if (http === null) return /timeout/i.test(source.error) ? 'Health timeout' : 'Health unreachable'
+  return 'Health check failed'
+}
+
+/** The tile's line: cause + time in the degraded spell, kept to ≤ 32 characters. */
+export function causeLine(cause: string, sinceIso: string | undefined, now: number): string {
+  const elapsed = sinceIso ? ` · ${shortDuration(now - Date.parse(sinceIso))}` : ''
+  const full = `${cause}${elapsed}`
+  if (full.length <= CAUSE_MAX) return full
+  const head = cause.split(' · ')[0] // drop "health 503" first
+  const shorter = `${head}${elapsed}`
+  if (shorter.length <= CAUSE_MAX) return shorter
+  return `${head.slice(0, Math.max(1, CAUSE_MAX - elapsed.length - 1))}…${elapsed}`
+}
+
+/** The banner's wording: "DB unreachable" (first part of the cause). */
+export function causeHead(cause: string): string {
+  return cause.split(' · ')[0]
+}
+
+// --- SSL expiry ----------------------------------------------------------------------
+
+/** What the TV needs from `site_certificates`. */
+export interface CertInfo {
+  validTo: string | null
+  failedDays: number
+}
+
+export type SslLevel = 'warn' | 'danger' | 'unknown'
+
+export interface SslWarning {
+  level: SslLevel
+  /** Whole Bangkok days left; null for 'unknown'. Negative once expired. */
+  daysLeft: number | null
+  expired: boolean
+  /** "SSL 12d", "SSL expired", "SSL ?". */
+  pill: string
+  validTo: string | null
+}
+
+const DAY = 86_400_000
+const bangkokDay = (ms: number) => Math.floor((ms + BANGKOK_OFFSET_MS) / DAY)
+
+export const SSL_WARN_DAYS = 21
+export const SSL_DANGER_DAYS = 7
+export const SSL_NOTIFY_THRESHOLDS = [30, 14, 7, 0] as const
+
+/** Days left until `validTo`, in Bangkok calendar days (Dec 8 seen on Nov 26 → 12). */
+export function sslDaysLeft(validTo: string, now: number): number {
+  return bangkokDay(Date.parse(validTo)) - bangkokDay(now)
+}
+
+/**
+ * Exception only: nothing while > 21 days remain; amber ≤ 21; red ≤ 7 or
+ * expired; grey "SSL ?" after 2+ failed daily lookups with no usable date.
+ * Never changes the site's own status.
+ */
+export function sslWarning(cert: CertInfo | null | undefined, now: number): SslWarning | null {
+  if (!cert) return null
+  const validMs = cert.validTo ? Date.parse(cert.validTo) : Number.NaN
+  if (Number.isNaN(validMs)) {
+    return cert.failedDays >= 2 ? { level: 'unknown', daysLeft: null, expired: false, pill: 'SSL ?', validTo: null } : null
+  }
+  const daysLeft = sslDaysLeft(cert.validTo!, now)
+  const expired = validMs <= now
+  if (!expired && daysLeft > SSL_WARN_DAYS) return null
+  return {
+    level: expired || daysLeft <= SSL_DANGER_DAYS ? 'danger' : 'warn',
+    daysLeft,
+    expired,
+    pill: expired ? 'SSL expired' : `SSL ${Math.max(0, daysLeft)}d`,
+    validTo: cert.validTo,
+  }
+}
+
+/** The Slack threshold `daysLeft` has reached (30 / 14 / 7 / 0), or null while > 30. */
+export function sslThresholdReached(daysLeft: number, expired: boolean): (typeof SSL_NOTIFY_THRESHOLDS)[number] | null {
+  if (expired) return 0
+  let reached: (typeof SSL_NOTIFY_THRESHOLDS)[number] | null = null
+  for (const threshold of SSL_NOTIFY_THRESHOLDS) if (daysLeft <= threshold) reached = threshold
+  return reached
+}
+
+/** "Dec 8" (or "Dec 8, 2026" with `year`) in Bangkok time. */
+export function sslDate(validTo: string, year = false): string {
+  return new Date(validTo).toLocaleDateString('en-US', {
+    timeZone: 'Asia/Bangkok',
+    month: 'short',
+    day: 'numeric',
+    ...(year ? { year: 'numeric' } : {}),
+  })
+}
+
+/** "expires in 12 days (Dec 8)", "expires today (Dec 8)", "expired (Dec 8)". */
+export function sslPhrase(warning: SslWarning, year = false): string {
+  if (!warning.validTo || warning.daysLeft === null) return 'could not be read'
+  const date = sslDate(warning.validTo, year)
+  if (warning.expired) return `expired (${date})`
+  if (warning.daysLeft <= 0) return `expires today (${date})`
+  return `expires in ${warning.daysLeft} ${warning.daysLeft === 1 ? 'day' : 'days'} (${date})`
+}
+
 // --- per-site threshold in the sparkline ---------------------------------------------
 
 export type ThresholdMode = 'in-scale' | 'above' | null
@@ -178,9 +340,12 @@ export interface FeedItem {
   kind: FeedKind
   /** "HTTP 503", "14m downtime", "1,620 ms". */
   detail: string
+  /** Degraded by the health check: the cause ("DB unreachable") replaces "slow · <ms>". */
+  cause?: string
 }
 
 export function feedText(item: FeedItem): string {
+  if (item.kind === 'degraded' && item.cause) return `${item.siteName} ${item.cause}`
   const verb = item.kind === 'down' ? 'down' : item.kind === 'recovered' ? 'recovered' : 'slow'
   return item.detail ? `${item.siteName} ${verb} · ${item.detail}` : `${item.siteName} ${verb}`
 }
