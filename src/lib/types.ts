@@ -20,6 +20,10 @@ export interface Site {
   created_at: string
   updated_at: string
   created_by: string | null
+  /** Object path in the `site-logos` bucket (round 10). Absent before that migration. */
+  logo_path?: string | null
+  /** Draw the logo as a white silhouette (round 10; default true). */
+  logo_mono?: boolean
 }
 
 /** One dependency reported by a monitored project's /api/health. */

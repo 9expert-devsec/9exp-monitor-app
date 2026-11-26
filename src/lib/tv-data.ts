@@ -2,6 +2,7 @@ import 'server-only'
 
 import { getDashboardData, type DashboardData } from '@/lib/dashboard'
 import { rollupDayKey } from '@/lib/format'
+import { siteLogoOf, type SiteLogo } from '@/lib/site-logo-url'
 import { serviceClient } from '@/lib/supabase/server'
 import {
   bucketAverages,
@@ -60,6 +61,8 @@ export interface TvData extends Pick<DashboardData, 'snapshots' | 'lastRunAt' | 
   heatmap: Record<string, HeatStatus[]>
   /** Per site id: nearest-rank P95 of the page response over 24 h (non-down checks); null under 20 samples. */
   p95: Record<string, number | null>
+  /** Per site id: logo URL (derived from logo_path; null → initials) and silhouette flag. */
+  logos: Record<string, SiteLogo>
   /** Per site id: the last certificate reading (absent → no SSL UI for that site). */
   certs: Record<string, CertInfo>
   /** Start of the first sparkline bucket (changes every 30 min — drives the slide-in). */
@@ -356,6 +359,7 @@ export async function getTvData(): Promise<TvData> {
     renderedAt: dashboard.renderedAt,
     sparklines,
     p95: p95BySite,
+    logos: Object.fromEntries(sites.map((site) => [site.id, siteLogoOf(site)])),
     certs,
     heatmap,
     sparkStart: new Date(sparkStartMs).toISOString(),

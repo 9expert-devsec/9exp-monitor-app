@@ -1,5 +1,7 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
+
 import { revalidatePath } from 'next/cache'
 
 import {
@@ -18,6 +20,8 @@ import {
   validateSiteInput,
   type SiteFieldErrors,
 } from '@/lib/site-form'
+import { LOGO_BUCKET, LOGO_MAX_BYTES, validateLogoFile } from '@/lib/site-logo'
+import { siteLogoOf } from '@/lib/site-logo-url'
 import { serviceClient } from '@/lib/supabase/server'
 import type { Site } from '@/lib/types'
 
@@ -336,4 +340,123 @@ export async function testConnectionAction(formData: FormData): Promise<TestConn
         ? healthProblemMessage(message.reason)
         : cannotConnectMessage(message?.key === 'page_down' ? message.reason : (result.error ?? ''))
   return { ok: true, tone: result.status, text }
+}
+
+// --- Logo (round 10) ---------------------------------------------------------
+
+export type LogoResult = { ok: true; url: string | null; mono: boolean } | { ok: false; error: string }
+
+const LOGO_NEEDS_MIGRATION = 'Logos need the database update first (migration 20261126140000_site_logos.sql).'
+
+type LogoRow = Pick<Site, 'id' | 'slug' | 'logo_path' | 'logo_mono'>
+
+/** The site's current logo columns; a missing column (migration not applied) → a clear error. */
+async function loadLogoRow(id: string): Promise<{ ok: true; row: LogoRow } | { ok: false; error: string }> {
+  const { data, error } = await serviceClient()
+    .from('monitored_sites')
+    .select('id, slug, logo_path, logo_mono')
+    .eq('id', id)
+    .maybeSingle<LogoRow>()
+  if (error) {
+    console.error('[logo] could not read logo columns:', error.message)
+    return { ok: false, error: /logo_/.test(error.message) ? LOGO_NEEDS_MIGRATION : error.message }
+  }
+  if (!data) return { ok: false, error: 'That site no longer exists.' }
+  return { ok: true, row: data }
+}
+
+async function removeLogoObject(path: string | null | undefined) {
+  if (!path) return
+  const { error } = await serviceClient().storage.from(LOGO_BUCKET).remove([path])
+  if (error) console.error('[logo] could not delete old object:', error.message)
+}
+
+/**
+ * Upload or replace a site's logo. Admin only, like editing a site. The bytes
+ * are checked (PNG / WebP / SVG by content, ≤ 256 KB), stored under
+ * `<site_id>/<random>.<ext>` so a replacement gets a new URL, and the previous
+ * object is deleted only after the row points at the new one.
+ */
+export async function uploadSiteLogoAction(formData: FormData): Promise<LogoResult> {
+  const caller = await authorizeAction({ admin: true })
+  if (!caller) return { ok: false, error: NOT_ALLOWED }
+
+  const id = String(formData.get('id') ?? '')
+  const file = formData.get('logo')
+  if (!(file instanceof File)) return { ok: false, error: 'Choose an image file.' }
+  // Cheap early refusal; validateLogoFile() below checks the size again with the bytes.
+  if (file.size > LOGO_MAX_BYTES) return { ok: false, error: `The logo is ${Math.ceil(file.size / 1024)} KB; the limit is 256 KB.` }
+
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const checked = validateLogoFile(bytes)
+  if (!checked.ok) return { ok: false, error: checked.error }
+
+  const loaded = await loadLogoRow(id)
+  if (!loaded.ok) return loaded
+  const { row } = loaded
+
+  const admin = serviceClient()
+  const path = `${row.id}/${randomUUID()}.${checked.kind.ext}`
+  const { error: uploadError } = await admin.storage.from(LOGO_BUCKET).upload(path, bytes, {
+    contentType: checked.kind.contentType,
+    cacheControl: '31536000',
+    upsert: false,
+  })
+  if (uploadError) {
+    console.error('[logo] upload failed:', uploadError.message)
+    return { ok: false, error: `Upload failed: ${uploadError.message}` }
+  }
+
+  const { error: updateError } = await admin
+    .from('monitored_sites')
+    .update({ logo_path: path, updated_at: new Date().toISOString() })
+    .eq('id', row.id)
+  if (updateError) {
+    await removeLogoObject(path)
+    return { ok: false, error: updateError.message }
+  }
+  await removeLogoObject(row.logo_path)
+
+  revalidateSites(row.slug)
+  revalidatePath('/tv')
+  return { ok: true, ...siteLogoOf({ logo_path: path, logo_mono: row.logo_mono }) }
+}
+
+export async function removeSiteLogoAction(id: string): Promise<LogoResult> {
+  const caller = await authorizeAction({ admin: true })
+  if (!caller) return { ok: false, error: NOT_ALLOWED }
+
+  const loaded = await loadLogoRow(id)
+  if (!loaded.ok) return loaded
+  const { row } = loaded
+
+  const { error } = await serviceClient()
+    .from('monitored_sites')
+    .update({ logo_path: null, updated_at: new Date().toISOString() })
+    .eq('id', row.id)
+  if (error) return { ok: false, error: error.message }
+  await removeLogoObject(row.logo_path)
+
+  revalidateSites(row.slug)
+  revalidatePath('/tv')
+  return { ok: true, url: null, mono: row.logo_mono ?? true }
+}
+
+export async function setSiteLogoMonoAction(id: string, mono: boolean): Promise<LogoResult> {
+  const caller = await authorizeAction({ admin: true })
+  if (!caller) return { ok: false, error: NOT_ALLOWED }
+
+  const loaded = await loadLogoRow(id)
+  if (!loaded.ok) return loaded
+  const { row } = loaded
+
+  const { error } = await serviceClient()
+    .from('monitored_sites')
+    .update({ logo_mono: mono === true, updated_at: new Date().toISOString() })
+    .eq('id', row.id)
+  if (error) return { ok: false, error: error.message }
+
+  revalidateSites(row.slug)
+  revalidatePath('/tv')
+  return { ok: true, ...siteLogoOf({ logo_path: row.logo_path, logo_mono: mono === true }) }
 }

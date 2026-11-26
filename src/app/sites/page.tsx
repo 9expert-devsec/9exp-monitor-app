@@ -3,6 +3,7 @@ import type { Metadata } from 'next'
 import { SiteDrawer } from '@/app/sites/site-drawer'
 import { SitesTable } from '@/app/sites/sites-table'
 import { requirePageSession } from '@/lib/session'
+import { siteLogoOf } from '@/lib/site-logo-url'
 import { listSites } from '@/lib/sites'
 
 export const metadata: Metadata = { title: 'Sites · 9Expert Monitor' }
@@ -37,7 +38,12 @@ export default async function SitesPage() {
         }
       />
 
-      {isAdmin && <SiteDrawer sites={rows.map((row) => row.site)} />}
+      {isAdmin && (
+        <SiteDrawer
+          sites={rows.map((row) => row.site)}
+          logos={Object.fromEntries(rows.map((row) => [row.site.id, siteLogoOf(row.site)]))}
+        />
+      )}
     </main>
   )
 }

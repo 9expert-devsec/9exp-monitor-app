@@ -1,19 +1,23 @@
 'use client'
 
-import { Trash2, X } from 'lucide-react'
+import { ImageUp, Trash2, X } from 'lucide-react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition, type FormEvent } from 'react'
 
 import {
   createSiteAction,
   deleteSiteAction,
+  removeSiteLogoAction,
+  setSiteLogoMonoAction,
   testConnectionAction,
+  uploadSiteLogoAction,
   updateSiteAction,
   type TestConnectionResult,
 } from '@/app/sites/actions'
 import { Button } from '@/components/button'
 import { Field, INPUT_CLASS } from '@/components/field'
 import { Modal } from '@/components/modal'
+import { SiteLogoSlot } from '@/components/site-logo-slot'
 import { Switch } from '@/components/switch'
 import { toast } from '@/components/toaster'
 import { DELETE_SITE_WARNING } from '@/lib/messages'
@@ -27,6 +31,8 @@ import {
   type SiteFieldErrors,
   type SiteGroup,
 } from '@/lib/site-form'
+import { LOGO_ACCEPT, validateLogoFile } from '@/lib/site-logo'
+import type { SiteLogo } from '@/lib/site-logo-url'
 import type { Site } from '@/lib/types'
 
 /**
@@ -34,7 +40,7 @@ import type { Site } from '@/lib/types'
  * search params on every render, never copied into state. Closing rewrites the
  * URL with `history.replaceState`, which Next.js syncs into `useSearchParams`.
  */
-export function SiteDrawer({ sites }: { sites: Site[] }) {
+export function SiteDrawer({ sites, logos }: { sites: Site[]; logos: Record<string, SiteLogo> }) {
   const searchParams = useSearchParams()
   const pathname = usePathname()
   const isNew = searchParams.get('new') === '1'
@@ -48,7 +54,14 @@ export function SiteDrawer({ sites }: { sites: Site[] }) {
   }
 
   // Keyed so switching between sites (or to "new") starts from a fresh form.
-  return <DrawerPanel key={site?.id ?? 'new'} site={site} onClose={close} />
+  return (
+    <DrawerPanel
+      key={site?.id ?? 'new'}
+      site={site}
+      logo={site ? (logos[site.id] ?? { url: null, mono: true }) : null}
+      onClose={close}
+    />
+  )
 }
 
 type TestState = Extract<TestConnectionResult, { ok: true }> | null
@@ -59,7 +72,7 @@ const TEST_TONE: Record<'up' | 'degraded' | 'down', string> = {
   down: 'bg-(--status-down-soft) text-(--status-down)',
 }
 
-function DrawerPanel({ site, onClose }: { site: Site | null; onClose: () => void }) {
+function DrawerPanel({ site, logo, onClose }: { site: Site | null; logo: SiteLogo | null; onClose: () => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const formRef = useRef<HTMLFormElement>(null)
   const isNew = site === null
@@ -312,6 +325,12 @@ function DrawerPanel({ site, onClose }: { site: Site | null; onClose: () => void
             </Field>
           </div>
 
+          {site && logo ? (
+            <LogoField site={site} name={name.trim() || site.name} initial={logo} />
+          ) : (
+            <p className="text-sm text-(--text-muted)">Logo: save the site first, then add its logo here.</p>
+          )}
+
           <div className="flex flex-col gap-4 rounded-md border border-(--border-subtle) p-4">
             <Switch
               id="site-enabled"
@@ -373,6 +392,89 @@ function DrawerPanel({ site, onClose }: { site: Site | null; onClose: () => void
         />
       )}
     </dialog>
+  )
+}
+
+/**
+ * Logo for the TV wall. Each change saves immediately (its own Server Action),
+ * separate from the form's Save. The preview is the TV tile header on the dark
+ * surface, with the silhouette setting applied.
+ */
+function LogoField({ site, name, initial }: { site: Site; name: string; initial: SiteLogo }) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [logo, setLogo] = useState(initial)
+  const [error, setError] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
+
+  function run(action: () => Promise<{ ok: true; url: string | null; mono: boolean } | { ok: false; error: string }>) {
+    setError(null)
+    startTransition(async () => {
+      const result = await action()
+      if (result.ok) setLogo({ url: result.url, mono: result.mono })
+      else setError(result.error)
+    })
+  }
+
+  async function upload(file: File | undefined) {
+    if (fileRef.current) fileRef.current.value = ''
+    if (!file) return
+    // Same rule as the server (which checks again): content, not the file name.
+    const checked = validateLogoFile(new Uint8Array(await file.arrayBuffer()))
+    if (!checked.ok) {
+      setError(checked.error)
+      return
+    }
+    const formData = new FormData()
+    formData.set('id', site.id)
+    formData.set('logo', file)
+    run(() => uploadSiteLogoAction(formData))
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <span className="text-sm font-medium text-(--text-primary)">Logo</span>
+      <div className="flex items-center gap-3 rounded-md bg-(--surface-page) px-4 py-3">
+        <SiteLogoSlot url={logo.url} mono={logo.mono} name={name} size="36px" radius="10px" fontSize="13px" />
+        <span className="font-heading min-w-0 truncate text-lg font-semibold">{name}</span>
+        <span className="ml-auto text-xs text-(--text-muted)">TV preview</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept={LOGO_ACCEPT}
+          className="sr-only"
+          id="site-logo-file"
+          onChange={(event) => void upload(event.target.files?.[0])}
+        />
+        <Button variant="secondary" disabled={pending} onClick={() => fileRef.current?.click()}>
+          <ImageUp size={16} aria-hidden="true" />
+          {pending ? 'Saving…' : logo.url ? 'Replace logo' : 'Upload logo'}
+        </Button>
+        {logo.url && (
+          <Button variant="ghost" disabled={pending} onClick={() => run(() => removeSiteLogoAction(site.id))}>
+            Remove
+          </Button>
+        )}
+        <span className="text-xs text-(--text-muted)">PNG, WebP or SVG · max 256 KB</span>
+      </div>
+      <Switch
+        id="site-logo-mono"
+        label="Show as white silhouette"
+        description="Keeps brand colours from competing with status colours. Turn off for a logo that turns into a blob."
+        checked={logo.mono}
+        disabled={pending}
+        onChange={(event) => {
+          const mono = event.target.checked
+          run(() => setSiteLogoMonoAction(site.id, mono))
+        }}
+      />
+      {error && (
+        <p role="alert" className="text-sm text-(--status-down)">
+          {error}
+        </p>
+      )}
+    </div>
   )
 }
 

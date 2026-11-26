@@ -1,6 +1,6 @@
 'use client'
 
-import { Maximize, Minimize } from 'lucide-react'
+import { CircleCheck, Maximize, Minimize, Server, ShieldCheck, TriangleAlert, Zap, type LucideIcon } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 
 import './tv.css'
@@ -27,6 +27,7 @@ import {
 import { HistoryBar } from '@/components/history-bar'
 import { headlineFor, worstStatus, type StatusCounts } from '@/components/overall-status-card'
 import { messageFor } from '@/components/site-card'
+import { SiteLogoSlot } from '@/components/site-logo-slot'
 import { StatusDot } from '@/components/status-dot'
 import { StatusHeatmap, type HeatRow } from '@/components/tv/status-heatmap'
 import { hostOf } from '@/lib/format'
@@ -70,6 +71,9 @@ function Dot({ status, size }: { status: DisplayStatus; size: string }) {
     </span>
   )
 }
+
+/** A KPI in the banner. The icon is decoration: muted, never status-coloured. */
+type Stat = { label: string; icon: LucideIcon; value: React.ReactNode; delta: string; color: string }
 
 const SSL_TONE: Record<SslLevel, DisplayStatus> = { warn: 'degraded', danger: 'down', unknown: 'stale' }
 
@@ -289,9 +293,10 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
       ? Math.round(((data.today.avgMs - data.today.avgMsYesterday) / data.today.avgMsYesterday) * 100)
       : null
   const needAttention = total - counts.up
-  const stats: { label: string; value: React.ReactNode; delta: string; color: string }[] = [
+  const stats: Stat[] = [
     {
       label: 'Sites up',
+      icon: Server,
       value: (
         <>
           <TweenNumber value={counts.up} format="int" /> / {total}
@@ -302,18 +307,21 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
     },
     {
       label: 'Avg response',
+      icon: Zap,
       value: <TweenNumber value={data.today.avgMs} format="ms" />,
       delta: avgDelta === null ? 'No data yesterday' : avgDelta === 0 ? 'Same as yesterday' : `${avgDelta < 0 ? '▼' : '▲'} ${Math.abs(avgDelta)}% vs yesterday`,
       color: avgDelta === null || avgDelta === 0 ? 'var(--text-muted)' : avgDelta < 0 ? 'var(--status-up)' : 'var(--status-degraded)',
     },
     {
       label: 'Uptime today',
+      icon: ShieldCheck,
       value: <TweenNumber value={data.today.uptimeToday} format="pct" />,
       delta: `30d · ${data.today.uptime30d === null ? '—' : `${data.today.uptime30d >= 100 ? '100' : data.today.uptime30d.toFixed(2)}%`}`,
       color: 'var(--text-muted)',
     },
     {
       label: 'Incidents today',
+      icon: TriangleAlert,
       value: <TweenNumber value={data.today.incidentsToday} format="int" />,
       delta: data.today.incidentsOpen > 0 ? `${data.today.incidentsOpen} open` : 'None open',
       color: data.today.incidentsOpen > 0 ? 'var(--status-down)' : 'var(--status-up)',
@@ -375,12 +383,17 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
                 data-on={tone === bannerStatus}
                 style={{
                   background: STATUS_SOFT[tone],
-                  borderColor: tone === 'up' ? 'color-mix(in srgb, var(--status-up) 40%, transparent)' : STATUS_COLOR[tone],
+                  borderColor: tone === 'up' ? 'color-mix(in srgb, var(--status-up) 50%, transparent)' : STATUS_COLOR[tone],
                 }}
               />
             ))}
             <div className="relative flex min-w-0 items-center" style={{ gap: u(20) }}>
-              <Dot status={bannerStatus} size={u(36)} />
+              {/* All OK: the calm state — a circle-check instead of the status shape. */}
+              {bannerStatus === 'up' ? (
+                <CircleCheck aria-hidden="true" className="shrink-0" style={{ width: u(36), height: u(36), color: 'var(--status-up)' }} />
+              ) : (
+                <Dot status={bannerStatus} size={u(36)} />
+              )}
               <div className="min-w-0">
                 <p key={headline} className="tv-fade-in font-heading truncate leading-tight font-bold" style={{ fontSize: u(34) }}>
                   {headline}
@@ -398,7 +411,11 @@ export function TvWall({ initial, autoRefresh = true }: { initial: TvData; autoR
             <dl className="tv-stats relative">
               {stats.map((stat) => (
                 <div key={stat.label} className="min-w-0">
-                  <dt className="font-semibold tracking-wider text-(--text-muted) uppercase" style={{ fontSize: u(12) }}>
+                  <dt
+                    className="flex items-center font-semibold tracking-wider text-(--text-muted) uppercase"
+                    style={{ fontSize: u(12), gap: u(8) }}
+                  >
+                    <stat.icon aria-hidden="true" className="shrink-0" style={{ width: u(18), height: u(18) }} />
                     {stat.label}
                   </dt>
                   <dd className="tv-num leading-tight font-bold whitespace-nowrap" style={{ fontSize: u(30) }}>
@@ -588,6 +605,7 @@ function TileGrid({
             sparkVersion={data.sparkStart}
             degradedSince={data.degradedSince[id]}
             p95={data.p95[id] ?? null}
+            logo={data.logos[id] ?? null}
             ssl={sslWarning(data.certs[id], now)}
             flashKey={flashing ? flash.generation : 0}
             flashDelay={delay}
@@ -606,6 +624,7 @@ function Tile({
   degradedSince,
   p95,
   ssl,
+  logo,
   flashKey,
   flashDelay,
 }: {
@@ -617,6 +636,7 @@ function Tile({
   /** P95 · 24h (null → "—"). */
   p95: number | null
   ssl: SslWarning | null
+  logo: { url: string | null; mono: boolean } | null
   flashKey: number
   flashDelay: number
 }) {
@@ -663,20 +683,31 @@ function Tile({
       {flashKey > 0 && <span key={flashKey} className="tv-flash" style={{ animationDelay: `${flashDelay}ms` }} />}
 
       <div className="relative flex min-w-0 items-center justify-between" style={{ gap: u(12, true) }}>
-        <div className="flex min-w-0 items-center" style={{ gap: u(10, true) }}>
-          <Dot status={status} size={u(18, true)} />
+        <div className="flex min-w-0 items-center" style={{ gap: u(12, true) }}>
+          {/* Logo slot, 36 × 36 at the tile's scale (1em = 16 × u × s). */}
+          <SiteLogoSlot
+            url={logo?.url ?? null}
+            mono={logo?.mono ?? true}
+            name={site.name}
+            size="2.25em"
+            radius="0.625em"
+            fontSize="0.8125em"
+          />
           <h2 className="font-heading truncate leading-tight font-semibold" style={{ fontSize: u(24, true) }} title={site.name}>
             {site.name}
           </h2>
         </div>
         <div className="flex shrink-0 items-center" style={{ gap: u(8, true) }}>
           {ssl && <SslPill warning={ssl} />}
-          <span
-            className="shrink-0 rounded-pill font-semibold"
-            style={{ background: STATUS_SOFT[status], color, fontSize: u(13, true), padding: `${u(4, true)} ${u(10, true)}` }}
-          >
-            {STATUS_LABEL[status]}
-          </span>
+          {/* Calm when OK: the pill only names a problem (Degraded / Down / No data). */}
+          {status !== 'up' && (
+            <span
+              className="shrink-0 rounded-pill font-semibold"
+              style={{ background: STATUS_SOFT[status], color, fontSize: u(13, true), padding: `${u(4, true)} ${u(10, true)}` }}
+            >
+              {STATUS_LABEL[status]}
+            </span>
+          )}
         </div>
       </div>
 
@@ -765,7 +796,7 @@ function MobileView({
   summary: string
   bannerStatus: DisplayStatus
   liveState: LiveState
-  stats: { label: string; value: React.ReactNode; delta: string; color: string }[]
+  stats: Stat[]
   feedChange: Change
   heatRows: HeatRow[]
 }) {
@@ -796,7 +827,10 @@ function MobileView({
       <dl className="grid grid-cols-2 gap-3">
         {stats.map((stat) => (
           <div key={stat.label} className="min-w-0 rounded-md border border-(--border-subtle) bg-(--surface-card) p-3">
-            <dt className="text-[10px] font-semibold tracking-wider text-(--text-muted) uppercase">{stat.label}</dt>
+            <dt className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-(--text-muted) uppercase">
+              <stat.icon aria-hidden="true" className="size-3.5 shrink-0" />
+              {stat.label}
+            </dt>
             <dd className="tv-num text-xl font-bold">{stat.value}</dd>
             <dd className="truncate text-xs" style={{ color: stat.color }}>
               {stat.delta}
@@ -825,7 +859,14 @@ function MobileView({
           const color = STATUS_COLOR[status]
           return (
             <li key={snapshot.site.id} className="flex items-center gap-3 px-3 py-2.5">
-              <Dot status={status} size="0.75rem" />
+              <SiteLogoSlot
+                url={data.logos[snapshot.site.id]?.url ?? null}
+                mono={data.logos[snapshot.site.id]?.mono ?? true}
+                name={snapshot.site.name}
+                size="24px"
+                radius="7px"
+                fontSize="9px"
+              />
               <div className="min-w-0 flex-1">
                 <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
                   <span className="truncate">{snapshot.site.name}</span>

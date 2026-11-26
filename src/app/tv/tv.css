@@ -143,9 +143,12 @@
 .tv-tile[data-status='down'] {
   border: 2px solid var(--status-down);
   background: color-mix(in srgb, var(--status-down) 7%, var(--surface-card));
+  /* Issue glow (R10): static, outside the tile; up / no data get none. */
+  box-shadow: 0 0 28px color-mix(in srgb, var(--status-down) 35%, transparent);
 }
 .tv-tile[data-status='degraded'] {
   border: 1.5px solid var(--status-degraded);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--status-degraded) 35%, transparent);
 }
 
 /* M8 — down glow breathes; degraded border breathes at half intensity. */
@@ -352,6 +355,18 @@
   font-size: calc(22 * var(--u));
   font-weight: 700;
   line-height: 1.2;
+}
+.tv-heat-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+}
+/* Decoration only: muted, never status-coloured (≈ 20 px large, 15 px compact). */
+.tv-heat-icon {
+  width: 0.9em;
+  height: 0.9em;
+  flex-shrink: 0;
+  color: var(--text-muted);
 }
 .tv-heat-compact .tv-heat-title {
   font-size: calc(15 * var(--u));

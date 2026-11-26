@@ -1,5 +1,6 @@
 'use client'
 
+import { LayoutGrid } from 'lucide-react'
 import { useLayoutEffect, useRef, type CSSProperties } from 'react'
 
 import { StatusDot } from '@/components/status-dot'
@@ -122,7 +123,10 @@ export function StatusHeatmap({
     <div className={`tv-heat tv-heat-${variant} ${className ?? ''}`} style={style}>
       {variant !== 'mobile' && (
         <div className="tv-heat-head">
-          <h2 className="tv-heat-title">{large ? 'Status · last 24h' : 'Status · 24h'}</h2>
+          <h2 className="tv-heat-title">
+            <LayoutGrid className="tv-heat-icon" aria-hidden="true" />
+            {large ? 'Status · last 24h' : 'Status · 24h'}
+          </h2>
           {large ? <Legend /> : <span className="tv-heat-note">30-min buckets</span>}
         </div>
       )}
